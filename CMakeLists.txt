@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.6)
 project(hyperion-webos VERSION 1.0 LANGUAGES C CXX)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 set(_cflags_list "")
 list(APPEND _cflags_list
     -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon
@@ -53,6 +56,12 @@ add_executable(hyperion-webos
     src/utils.c
     src/hyperion_client.c
     src/json_rpc_client.c
+    src/webserver.cpp
+    src/ddp_sender.c
+    src/led_layout.c
+    src/led_mapper.c
+    src/led_smoother.c
+    src/rest_api.c
 )
 set_target_properties(hyperion-webos PROPERTIES
     BUILD_RPATH_USE_ORIGIN ON
@@ -62,6 +71,7 @@ set_target_properties(hyperion-webos PROPERTIES
     # LINK_FLAGS "-Wl,-rpath,'$ORIGIN:$ORIGIN/lib' -Wl,-z,origin"
 )
 target_include_directories(hyperion-webos PRIVATE ${CMAKE_BINARY_DIR})
-target_link_libraries(hyperion-webos fbs flatccrt pthread dl unicapture rt ${GTHREAD2_LDFLAGS} ${PBNJSON_LDFLAGS} ${LS2_LDFLAGS} ${GLIB2_LDFLAGS} ${PMLOG_LDFLAGS})
+target_include_directories(hyperion-webos SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party)
+target_link_libraries(hyperion-webos fbs flatccrt pthread dl unicapture rt m ${GTHREAD2_LDFLAGS} ${PBNJSON_LDFLAGS} ${LS2_LDFLAGS} ${GLIB2_LDFLAGS} ${PMLOG_LDFLAGS})
 add_dependencies(hyperion-webos version)
 set_property(TARGET hyperion-webos PROPERTY ENABLE_EXPORTS 1)

@@ -6,7 +6,7 @@ void settings_init(settings_t* settings)
     settings->ui_backend = strdup("auto");
     settings->video_backend = strdup("auto");
 
-    settings->address = strdup("");
+    settings->address = strdup("172.16.24.1");
     settings->port = 19400;
     settings->priority = 150;
     settings->unix_socket = false;
@@ -26,6 +26,16 @@ void settings_init(settings_t* settings)
     settings->no_powerstate = false;
 
     settings->dump_frames = false;
+
+    settings->direct_led_output = true;
+    settings->wled_address = strdup("172.16.24.60");
+    settings->wled_port = 4048;
+    settings->smoothing_rise_time_ms = 200;
+    settings->smoothing_fall_time_ms = 80;
+
+    settings->led_count = LED_LAYOUT_DEFAULT_COUNT;
+    settings->led_layout = malloc(sizeof(led_region_t) * (size_t)settings->led_count);
+    memcpy(settings->led_layout, led_layout_default, sizeof(led_region_t) * (size_t)settings->led_count);
 }
 
 int settings_load_json(settings_t* settings, jvalue_ref source)
@@ -84,6 +94,50 @@ int settings_load_json(settings_t* settings, jvalue_ref source)
     if ((value = jobject_get(source, j_cstr_to_buffer("nopowerstate"))) && jis_boolean(value))
         jboolean_get(value, &settings->no_powerstate);
 
+    if ((value = jobject_get(source, j_cstr_to_buffer("directledoutput"))) && jis_boolean(value))
+        jboolean_get(value, &settings->direct_led_output);
+    if ((value = jobject_get(source, j_cstr_to_buffer("wledaddress"))) && jis_string(value)) {
+        free(settings->wled_address);
+        raw_buffer str = jstring_get(value);
+        settings->wled_address = strdup(str.m_str);
+        jstring_free_buffer(str);
+    }
+    if ((value = jobject_get(source, j_cstr_to_buffer("wledport"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->wled_port);
+    if ((value = jobject_get(source, j_cstr_to_buffer("smoothingrisetimems"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->smoothing_rise_time_ms);
+    if ((value = jobject_get(source, j_cstr_to_buffer("smoothingfalltimems"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->smoothing_fall_time_ms);
+
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayout"))) && jis_array(value)) {
+        ssize_t region_count = jarray_size(value);
+        led_region_t* regions = malloc(sizeof(led_region_t) * (size_t)region_count);
+
+        for (ssize_t i = 0; i < region_count; i++) {
+            jvalue_ref region = jarray_get(value, i);
+            double hmin = 0, hmax = 0, vmin = 0, vmax = 0;
+            jvalue_ref field;
+
+            if ((field = jobject_get(region, j_cstr_to_buffer("hmin"))) && jis_number(field))
+                jnumber_get_f64(field, &hmin);
+            if ((field = jobject_get(region, j_cstr_to_buffer("hmax"))) && jis_number(field))
+                jnumber_get_f64(field, &hmax);
+            if ((field = jobject_get(region, j_cstr_to_buffer("vmin"))) && jis_number(field))
+                jnumber_get_f64(field, &vmin);
+            if ((field = jobject_get(region, j_cstr_to_buffer("vmax"))) && jis_number(field))
+                jnumber_get_f64(field, &vmax);
+
+            regions[i].hmin = (float)hmin;
+            regions[i].hmax = (float)hmax;
+            regions[i].vmin = (float)vmin;
+            regions[i].vmax = (float)vmax;
+        }
+
+        free(settings->led_layout);
+        settings->led_layout = regions;
+        settings->led_count = (int)region_count;
+    }
+
     return 0;
 }
 
@@ -110,6 +164,23 @@ int settings_save_json(settings_t* settings, jvalue_ref target)
 
     jobject_set(target, j_cstr_to_buffer("nohdr"), jboolean_create(settings->no_hdr));
     jobject_set(target, j_cstr_to_buffer("nopowerstate"), jboolean_create(settings->no_powerstate));
+
+    jobject_set(target, j_cstr_to_buffer("directledoutput"), jboolean_create(settings->direct_led_output));
+    jobject_set(target, j_cstr_to_buffer("wledaddress"), jstring_create(settings->wled_address));
+    jobject_set(target, j_cstr_to_buffer("wledport"), jnumber_create_i32(settings->wled_port));
+    jobject_set(target, j_cstr_to_buffer("smoothingrisetimems"), jnumber_create_i32(settings->smoothing_rise_time_ms));
+    jobject_set(target, j_cstr_to_buffer("smoothingfalltimems"), jnumber_create_i32(settings->smoothing_fall_time_ms));
+
+    jvalue_ref led_layout_arr = jarray_create(NULL);
+    for (int i = 0; i < settings->led_count; i++) {
+        jvalue_ref region = jobject_create();
+        jobject_set(region, j_cstr_to_buffer("hmin"), jnumber_create_f64(settings->led_layout[i].hmin));
+        jobject_set(region, j_cstr_to_buffer("hmax"), jnumber_create_f64(settings->led_layout[i].hmax));
+        jobject_set(region, j_cstr_to_buffer("vmin"), jnumber_create_f64(settings->led_layout[i].vmin));
+        jobject_set(region, j_cstr_to_buffer("vmax"), jnumber_create_f64(settings->led_layout[i].vmax));
+        jarray_append(led_layout_arr, region);
+    }
+    jobject_set(target, j_cstr_to_buffer("ledlayout"), led_layout_arr);
 
     return 0;
 }

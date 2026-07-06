@@ -7,9 +7,11 @@
 #include <string.h>
 
 #include "log.h"
+#include "rest_api.h"
 #include "service.h"
 #include "settings.h"
 #include "version.h"
+#include "webserver.h"
 
 GMainLoop* loop = NULL;
 
@@ -215,11 +217,19 @@ int main(int argc, char* argv[])
         }
     }
 
+    rest_api_init(&service);
+
+    if (webserver_start(WEBSERVER_DEFAULT_PORT) != 0) {
+        WARN("Webserver startup failed");
+    }
+
     DBG("Going into main loop..");
 
     g_main_loop_run(loop);
 
     DBG("Main loop quit...");
+
+    webserver_stop();
 
     DBG("Cleaning up service...");
     service_destroy(&service);

@@ -1,6 +1,9 @@
 #include "service.h"
+#include "ddp_sender.h"
 #include "hyperion_client.h"
 #include "json_rpc_client.h"
+#include "led_mapper.h"
+#include "led_smoother.h"
 #include "log.h"
 #include "pthread.h"
 #include "settings.h"
@@ -9,6 +12,7 @@
 #include <errno.h>
 #include <luna-service2/lunaservice.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -57,8 +61,21 @@ void* connection_loop(void* data)
     return 0;
 }
 
-int service_feed_frame(void* data __attribute__((unused)), int width, int height, uint8_t* rgb_data)
+int service_feed_frame(void* data, int width, int height, uint8_t* rgb_data)
 {
+    service_t* service = (service_t*)data;
+
+    if (service->settings->direct_led_output) {
+        int led_count = service->settings->led_count;
+        led_mapper_compute(rgb_data, width, height, service->settings->led_layout, led_count, service->led_rgb_buffer);
+        led_smoother_apply(service->led_rgb_buffer, led_count,
+            service->settings->smoothing_rise_time_ms, service->settings->smoothing_fall_time_ms);
+        if (ddp_sender_send(service->led_rgb_buffer, led_count) != 0) {
+            WARN("DDP frame sending failed");
+        }
+        return 0;
+    }
+
     int ret;
     if ((ret = hyperion_set_image(rgb_data, width, height)) != 0) {
         WARN("Frame sending failed: %d", ret);
@@ -84,11 +101,25 @@ int service_init(service_t* service, settings_t* settings)
     unicapture_init(&service->unicapture);
     service->unicapture.vsync = settings->vsync;
     service->unicapture.fps = settings->fps;
-    service->unicapture.target_format = settings->send_nv12 ? PIXFMT_YUV420_SEMI_PLANAR : PIXFMT_RGB;
+    // Direct WLED output needs RGB24 frames for LED-region averaging, regardless of send_nv12
+    service->unicapture.target_format = (settings->direct_led_output || !settings->send_nv12) ? PIXFMT_RGB : PIXFMT_YUV420_SEMI_PLANAR;
     service->unicapture.callback = &service_feed_frame;
     service->unicapture.callback_nv12 = &service_feed_nv12_frame;
     service->unicapture.callback_data = (void*)service;
     service->unicapture.dump_frames = settings->dump_frames;
+
+    if (settings->direct_led_output) {
+        service->led_rgb_buffer = malloc((size_t)settings->led_count * 3);
+        led_smoother_init(settings->led_count);
+
+        if (ddp_sender_init(settings->wled_address, settings->wled_port) != 0) {
+            WARN("Failed to initialize DDP sender for %s:%d", settings->wled_address, settings->wled_port);
+        } else {
+            INFO("Direct WLED output enabled: sending %d LEDs via DDP to %s:%d (smoothing rise/fall: %d/%dms)",
+                settings->led_count, settings->wled_address, settings->wled_port,
+                settings->smoothing_rise_time_ms, settings->smoothing_fall_time_ms);
+        }
+    }
 
     service_init_backends(service);
 
@@ -175,7 +206,24 @@ int service_destroy(service_t* service)
     return 0;
 }
 
-int service_start(service_t* service)
+// Guards service_start/service_stop/service_apply_settings_json so that two
+// callers (e.g. a REST request and a Luna call, or two overlapping REST
+// requests from the web UI) can never run these concurrently. Recursive
+// because service_apply_settings_json calls service_destroy()/service_init()/
+// service_start() itself while already holding the lock.
+static pthread_mutex_t _control_lock;
+static pthread_once_t _control_lock_once = PTHREAD_ONCE_INIT;
+
+static void _control_lock_init(void)
+{
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&_control_lock, &attr);
+    pthread_mutexattr_destroy(&attr);
+}
+
+static int _service_start_impl(service_t* service)
 {
     if (service->running) {
         return 1;
@@ -191,30 +239,64 @@ int service_start(service_t* service)
         return res;
     }
 
-    service->connection_loop_running = true;
-    if (pthread_create(&service->connection_thread, NULL, connection_loop, service) != 0) {
-        unicapture_stop(&service->unicapture);
-        service->connection_loop_running = false;
-        service->running = false;
-        return -1;
+    if (!service->settings->direct_led_output) {
+        service->connection_loop_running = true;
+        if (pthread_create(&service->connection_thread, NULL, connection_loop, service) != 0) {
+            unicapture_stop(&service->unicapture);
+            service->connection_loop_running = false;
+            service->running = false;
+            return -1;
+        }
     }
     return 0;
 }
 
-int service_stop(service_t* service)
+int service_start(service_t* service)
+{
+    pthread_once(&_control_lock_once, _control_lock_init);
+    pthread_mutex_lock(&_control_lock);
+    int ret = _service_start_impl(service);
+    pthread_mutex_unlock(&_control_lock);
+    return ret;
+}
+
+static int _service_stop_impl(service_t* service)
 {
     if (!service->running) {
         return 1;
     }
 
-    service->connection_loop_running = false;
+    if (!service->settings->direct_led_output) {
+        service->connection_loop_running = false;
+    }
+
+    // Must fully join the capture thread before touching anything it feeds
+    // frames into (ddp_sender/led_smoother/led_rgb_buffer) - otherwise it can
+    // still be mid-frame using resources we're about to close/free below.
     unicapture_stop(&service->unicapture);
-    pthread_join(service->connection_thread, NULL);
+
+    if (!service->settings->direct_led_output) {
+        pthread_join(service->connection_thread, NULL);
+    } else {
+        ddp_sender_close();
+        led_smoother_close();
+        free(service->led_rgb_buffer);
+        service->led_rgb_buffer = NULL;
+    }
     service->running = false;
 
     service_destroy_backends(service);
 
     return 0;
+}
+
+int service_stop(service_t* service)
+{
+    pthread_once(&_control_lock_once, _control_lock_init);
+    pthread_mutex_lock(&_control_lock);
+    int ret = _service_stop_impl(service);
+    pthread_mutex_unlock(&_control_lock);
+    return ret;
 }
 
 bool service_method_start(LSHandle* sh, LSMessage* msg, void* data)
@@ -249,12 +331,9 @@ bool service_method_stop(LSHandle* sh, LSMessage* msg, void* data)
     return false;
 }
 
-bool service_method_status(LSHandle* sh, LSMessage* msg, void* data)
+jvalue_ref service_build_status_json(service_t* service)
 {
-    service_t* service = (service_t*)data;
     jvalue_ref jobj = jobject_create();
-    LSError lserror;
-    LSErrorInit(&lserror);
 
     jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(true));
     jobject_set(jobj, j_cstr_to_buffer("elevated"), jboolean_create(getuid() == 0));
@@ -267,47 +346,28 @@ bool service_method_status(LSHandle* sh, LSMessage* msg, void* data)
     jobject_set(jobj, j_cstr_to_buffer("uiRunning"), jboolean_create(service->unicapture.ui_capture_running));
     jobject_set(jobj, j_cstr_to_buffer("framerate"), jnumber_create_f64(service->unicapture.metrics.framerate));
 
-    LSMessageReply(sh, msg, jvalue_tostring_simple(jobj), &lserror);
+    jobject_set(jobj, j_cstr_to_buffer("ddpFramesSent"), jnumber_create_i64((int64_t)ddp_sender_frames_sent()));
+    jobject_set(jobj, j_cstr_to_buffer("ddpLastSendOk"), jboolean_create(ddp_sender_last_send_ok()));
 
-    j_release(&jobj);
-
-    return true;
+    return jobj;
 }
 
-bool service_method_get_settings(LSHandle* sh, LSMessage* msg, void* data)
+jvalue_ref service_build_settings_json(service_t* service)
 {
-    service_t* service = (service_t*)data;
-    LSError lserror;
-    LSErrorInit(&lserror);
-
     jvalue_ref jobj = jobject_create();
-
     jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(true));
     settings_save_json(service->settings, jobj);
-
-    LSMessageReply(sh, msg, jvalue_tostring_simple(jobj), &lserror);
-
-    j_release(&jobj);
-
-    return true;
+    return jobj;
 }
 
-bool service_method_set_settings(LSHandle* sh, LSMessage* msg, void* data)
+static int _service_apply_settings_json_impl(service_t* service, jvalue_ref parsed)
 {
-    service_t* service = (service_t*)data;
-    LSError lserror;
-    LSErrorInit(&lserror);
-
-    JSchemaInfo schema;
-    jvalue_ref parsed;
-
-    jschema_info_init(&schema, jschema_all(), NULL, NULL);
-    parsed = jdom_parse(j_cstr_to_buffer(LSMessageGetPayload(msg)), DOMOPT_NOOPT, &schema);
-
-    if (jis_null(parsed)) {
-        j_release(&parsed);
-        return false;
-    }
+    // Stop first: service_feed_frame (running on the capture thread) reads
+    // settings (led_layout/led_count/smoothing/...) on every frame, so it must
+    // be halted before settings_load_json below is allowed to mutate/replace
+    // any of that - otherwise the capture thread can race a free() of the old
+    // led_layout array, or read a torn led_layout/led_count pair.
+    bool was_running = service_destroy(service) == 0;
 
     int res = settings_load_json(service->settings, parsed);
     if (res == 0) {
@@ -331,13 +391,68 @@ bool service_method_set_settings(LSHandle* sh, LSMessage* msg, void* data)
         }
     }
 
-    bool destroyed = service_destroy(service) == 0;
-
     service_init(service, service->settings);
 
-    if (destroyed) {
+    if (was_running) {
         service_start(service);
     }
+
+    return res;
+}
+
+int service_apply_settings_json(service_t* service, jvalue_ref parsed)
+{
+    pthread_once(&_control_lock_once, _control_lock_init);
+    pthread_mutex_lock(&_control_lock);
+    int ret = _service_apply_settings_json_impl(service, parsed);
+    pthread_mutex_unlock(&_control_lock);
+    return ret;
+}
+
+bool service_method_status(LSHandle* sh, LSMessage* msg, void* data)
+{
+    service_t* service = (service_t*)data;
+    LSError lserror;
+    LSErrorInit(&lserror);
+
+    jvalue_ref jobj = service_build_status_json(service);
+    LSMessageReply(sh, msg, jvalue_tostring_simple(jobj), &lserror);
+    j_release(&jobj);
+
+    return true;
+}
+
+bool service_method_get_settings(LSHandle* sh, LSMessage* msg, void* data)
+{
+    service_t* service = (service_t*)data;
+    LSError lserror;
+    LSErrorInit(&lserror);
+
+    jvalue_ref jobj = service_build_settings_json(service);
+    LSMessageReply(sh, msg, jvalue_tostring_simple(jobj), &lserror);
+    j_release(&jobj);
+
+    return true;
+}
+
+bool service_method_set_settings(LSHandle* sh, LSMessage* msg, void* data)
+{
+    service_t* service = (service_t*)data;
+    LSError lserror;
+    LSErrorInit(&lserror);
+
+    JSchemaInfo schema;
+    jvalue_ref parsed;
+
+    jschema_info_init(&schema, jschema_all(), NULL, NULL);
+    parsed = jdom_parse(j_cstr_to_buffer(LSMessageGetPayload(msg)), DOMOPT_NOOPT, &schema);
+
+    if (jis_null(parsed)) {
+        j_release(&parsed);
+        return false;
+    }
+
+    int res = service_apply_settings_json(service, parsed);
 
     jvalue_ref jobj = jobject_create();
     jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(res == 0));

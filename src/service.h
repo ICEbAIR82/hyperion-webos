@@ -22,6 +22,8 @@ typedef struct {
 
     settings_t* settings;
 
+    uint8_t* led_rgb_buffer;
+
     pthread_t connection_thread;
     bool connection_loop_running;
 
@@ -38,3 +40,13 @@ int service_start(service_t* service);
 int service_stop(service_t* service);
 
 int service_destroy(service_t* service);
+
+// Shared building blocks behind both the Luna API (getSettings/setSettings/status)
+// and the HTTP REST API, so the two never drift apart.
+// Caller owns the returned jvalue_ref and must j_release() it.
+jvalue_ref service_build_status_json(service_t* service);
+jvalue_ref service_build_settings_json(service_t* service);
+
+// Applies a (partial) settings JSON, persists it, and cleanly restarts the
+// service if it was already running. Returns 0 on success.
+int service_apply_settings_json(service_t* service, jvalue_ref parsed);

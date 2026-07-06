@@ -1,5 +1,6 @@
 #pragma once
 
+#include "led_layout.h"
 #include <pbnjson.h>
 #include <stdbool.h>
 
@@ -32,6 +33,16 @@ typedef struct _settings_t {
 
     bool no_hdr;
     bool no_powerstate;
+
+    // Direct-to-WLED output (DDP), bypassing Hyperion/HyperHDR entirely
+    bool direct_led_output;
+    char* wled_address;
+    int wled_port;
+    int smoothing_rise_time_ms;
+    int smoothing_fall_time_ms;
+
+    led_region_t* led_layout;
+    int led_count;
 } settings_t;
 
 void settings_init(settings_t*);

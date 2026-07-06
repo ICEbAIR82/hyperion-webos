@@ -317,7 +317,7 @@ bool service_method_set_settings(LSHandle* sh, LSMessage* msg, void* data)
 
         const char* startup_directory = "/var/lib/webosbrew/init.d";
         const char* startup_symlink = "/var/lib/webosbrew/init.d/piccapautostart";
-        const char* startup_script = "/media/developer/apps/usr/palm/services/org.webosbrew.piccap.service/piccapautostart";
+        const char* startup_script = "/media/developer/apps/usr/palm/services/org.webosbrew.piccap-plus.service/piccapautostart";
 
         if (unlink(startup_symlink) != 0 && errno != ENOENT) {
             WARN("Startup symlink removal failed: %s", strerror(errno));

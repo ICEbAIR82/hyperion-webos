@@ -5,7 +5,7 @@
 #include <glib.h>
 #include <pthread.h>
 
-#define SERVICE_NAME "org.webosbrew.piccap.service"
+#define SERVICE_NAME "org.webosbrew.piccap-plus.service"
 
 typedef struct {
     bool running;

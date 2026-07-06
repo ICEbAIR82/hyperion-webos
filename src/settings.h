@@ -3,7 +3,7 @@
 #include <pbnjson.h>
 #include <stdbool.h>
 
-#define SETTINGS_PERSISTENCE_PATH "/media/developer/apps/usr/palm/services/org.webosbrew.piccap.service/config.json"
+#define SETTINGS_PERSISTENCE_PATH "/media/developer/apps/usr/palm/services/org.webosbrew.piccap-plus.service/config.json"
 
 // Settings stored in config.json file
 

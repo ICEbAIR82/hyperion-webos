@@ -190,6 +190,41 @@
     color: var(--text-dim);
     margin-top: 2px;
   }
+  .hint {
+    display: block;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    margin-top: 8px;
+  }
+  .hint.ok { color: var(--ok); }
+  .hint.err { color: var(--err); }
+  #wledDeviceList {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .wledDevice {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    background: var(--input-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    min-height: 44px;
+  }
+  .wledDevice:active { transform: scale(0.98); }
+  .wledDevice .name {
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .wledDevice .meta {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
   .switch {
     position: relative;
     width: 46px;
@@ -315,6 +350,15 @@
         <label for="f-wledport">WLED port</label>
         <input type="number" id="f-wledport" data-key="wledport" data-type="int" placeholder="4048">
       </div>
+    </div>
+
+    <div class="field">
+      <div class="btn-row" style="margin-top:0">
+        <button id="btnWledDiscover" type="button">Discover WLED devices</button>
+        <button id="btnWledCheck" type="button">Check LED count</button>
+      </div>
+      <span class="hint" id="wledCheckResult"></span>
+      <div id="wledDeviceList"></div>
     </div>
 
     <div class="row2">
@@ -817,6 +861,93 @@
     }).catch(function () {
       btn.disabled = false;
       toast('Layout save failed: network error', true);
+    });
+  });
+
+  // --- WLED discovery + LED-count plausibility check ---
+  var API_WLED_DISCOVER = '/api/wled/discover';
+  var API_WLED_INFO = '/api/wled/info';
+  var wledDiscoverPolling = null;
+
+  function renderWledDevices(devices) {
+    var list = document.getElementById('wledDeviceList');
+    list.innerHTML = '';
+    devices.forEach(function (dev) {
+      var row = document.createElement('div');
+      row.className = 'wledDevice';
+      row.innerHTML = '<span class="name"></span><span class="meta"></span>';
+      row.querySelector('.name').textContent = dev.name;
+      row.querySelector('.meta').textContent = dev.ip + ' · ' + dev.ledCount + ' LEDs';
+      row.addEventListener('click', function () {
+        document.getElementById('f-wledaddress').value = dev.ip;
+        if (!document.getElementById('f-wledport').value) {
+          document.getElementById('f-wledport').value = 4048;
+        }
+        toast('Selected ' + dev.ip);
+      });
+      list.appendChild(row);
+    });
+  }
+
+  function pollWledDiscovery() {
+    fetch(API_WLED_DISCOVER).then(function (r) { return r.json(); }).then(function (result) {
+      renderWledDevices(result.devices || []);
+      var btn = document.getElementById('btnWledDiscover');
+      if (result.scanning) {
+        btn.textContent = 'Scanning... (' + (result.devices || []).length + ' found)';
+      } else {
+        btn.textContent = 'Discover WLED devices';
+        btn.disabled = false;
+        clearInterval(wledDiscoverPolling);
+        wledDiscoverPolling = null;
+      }
+    }).catch(function () {
+      clearInterval(wledDiscoverPolling);
+      wledDiscoverPolling = null;
+      var btn = document.getElementById('btnWledDiscover');
+      btn.disabled = false;
+      btn.textContent = 'Discover WLED devices';
+    });
+  }
+
+  document.getElementById('btnWledDiscover').addEventListener('click', function () {
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Scanning...';
+    document.getElementById('wledDeviceList').innerHTML = '';
+    fetch(API_WLED_DISCOVER, { method: 'POST' }).then(function () {
+      if (wledDiscoverPolling) clearInterval(wledDiscoverPolling);
+      wledDiscoverPolling = setInterval(pollWledDiscovery, 1200);
+      pollWledDiscovery();
+    }).catch(function () {
+      btn.disabled = false;
+      btn.textContent = 'Discover WLED devices';
+      toast('Discovery failed to start', true);
+    });
+  });
+
+  document.getElementById('btnWledCheck').addEventListener('click', function () {
+    var btn = this;
+    var resultEl = document.getElementById('wledCheckResult');
+    var ip = document.getElementById('f-wledaddress').value;
+    btn.disabled = true;
+    resultEl.textContent = 'Checking...';
+    resultEl.className = 'hint';
+    fetch(API_WLED_INFO + '?ip=' + encodeURIComponent(ip)).then(function (r) { return r.json(); }).then(function (info) {
+      btn.disabled = false;
+      if (!info.reachable) {
+        resultEl.textContent = 'WLED not reachable at this address';
+        resultEl.className = 'hint err';
+        return;
+      }
+      var match = info.ledCount === info.configuredLedCount;
+      resultEl.textContent = info.name + ' reports ' + info.ledCount + ' LEDs, your layout has ' +
+        info.configuredLedCount + ' configured' + (match ? ' - match' : ' - MISMATCH');
+      resultEl.className = 'hint ' + (match ? 'ok' : 'err');
+    }).catch(function () {
+      btn.disabled = false;
+      resultEl.textContent = 'Check failed: network error';
+      resultEl.className = 'hint err';
     });
   });
 

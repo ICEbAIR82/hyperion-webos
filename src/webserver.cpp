@@ -56,6 +56,24 @@ int webserver_start(uint16_t port)
         free(body);
     });
 
+    g_server->Post("/api/wled/discover", [](const httplib::Request&, httplib::Response& res) {
+        rest_api_wled_discover_start();
+        res.set_content("{\"started\":true}", "application/json");
+    });
+
+    g_server->Get("/api/wled/discover", [](const httplib::Request&, httplib::Response& res) {
+        char* body = rest_api_wled_discover_results();
+        res.set_content(body, "application/json");
+        free(body);
+    });
+
+    g_server->Get("/api/wled/info", [](const httplib::Request& req, httplib::Response& res) {
+        std::string ip = req.get_param_value("ip");
+        char* body = rest_api_wled_info(ip.c_str());
+        res.set_content(body, "application/json");
+        free(body);
+    });
+
     g_thread = std::thread([port]() {
         INFO("Webserver listening on 0.0.0.0:%d", port);
         if (!g_server->listen("0.0.0.0", port)) {

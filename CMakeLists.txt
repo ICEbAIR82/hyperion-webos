@@ -62,6 +62,7 @@ add_executable(hyperion-webos
     src/led_mapper.c
     src/led_smoother.c
     src/rest_api.c
+    src/wled_discovery.cpp
 )
 set_target_properties(hyperion-webos PROPERTIES
     BUILD_RPATH_USE_ORIGIN ON

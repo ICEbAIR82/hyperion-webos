@@ -514,47 +514,47 @@
     <div class="row2">
       <div class="field">
         <label for="ll-top">Top</label>
-        <input type="number" id="ll-top" min="0" value="70">
+        <input type="number" id="ll-top" min="0" data-key="ledlayouttop" data-type="int">
       </div>
       <div class="field">
         <label for="ll-bottom">Bottom</label>
-        <input type="number" id="ll-bottom" min="0" value="48">
+        <input type="number" id="ll-bottom" min="0" data-key="ledlayoutbottom" data-type="int">
       </div>
     </div>
     <div class="row2">
       <div class="field">
         <label for="ll-left">Left</label>
-        <input type="number" id="ll-left" min="0" value="41">
+        <input type="number" id="ll-left" min="0" data-key="ledlayoutleft" data-type="int">
       </div>
       <div class="field">
         <label for="ll-right">Right</label>
-        <input type="number" id="ll-right" min="0" value="41">
+        <input type="number" id="ll-right" min="0" data-key="ledlayoutright" data-type="int">
       </div>
     </div>
     <div class="row2">
       <div class="field">
         <label for="ll-gaplen">Gap length</label>
-        <input type="number" id="ll-gaplen" min="0" value="22">
+        <input type="number" id="ll-gaplen" min="0" data-key="ledlayoutgaplength" data-type="int">
       </div>
       <div class="field">
         <label for="ll-gappos">Gap position</label>
-        <input type="number" id="ll-gappos" min="0" value="124">
+        <input type="number" id="ll-gappos" min="0" data-key="ledlayoutgapposition" data-type="int">
       </div>
     </div>
     <div class="row2">
       <div class="field">
         <label for="ll-inputpos">Input position</label>
-        <input type="number" id="ll-inputpos" min="0" value="125">
+        <input type="number" id="ll-inputpos" min="0" data-key="ledlayoutinputposition" data-type="int">
       </div>
       <div class="field">
         <label for="ll-groupv">Vertical grouping</label>
-        <input type="number" id="ll-groupv" min="0" value="0">
+        <input type="number" id="ll-groupv" min="0" data-key="ledlayoutgroupv" data-type="int">
       </div>
     </div>
     <div class="row2">
       <div class="field">
         <label for="ll-grouph">Horizontal grouping</label>
-        <input type="number" id="ll-grouph" min="0" value="0">
+        <input type="number" id="ll-grouph" min="0" data-key="ledlayoutgrouph" data-type="int">
       </div>
       <div></div>
     </div>
@@ -562,7 +562,7 @@
     <div class="switch-field">
       <label for="ll-reverse">Reverse direction</label>
       <label class="switch">
-        <input type="checkbox" id="ll-reverse" checked>
+        <input type="checkbox" id="ll-reverse" data-key="ledlayoutreverse" data-type="bool">
         <span class="track"></span>
       </label>
     </div>
@@ -581,9 +581,8 @@
     <div class="field">
       <label id="llCount">Total LEDs: -</label>
       <canvas id="llCanvas" style="width:100%;height:auto;border-radius:8px;background:#05070a;touch-action:none;"></canvas>
+      <span class="hint">Saved together with "Save configuration" below</span>
     </div>
-
-    <button id="btnSaveLayout" class="primary" style="width:100%">Save layout</button>
   </section>
 
   <section class="card">
@@ -667,6 +666,12 @@
       ledInfo.textContent = 'not configured';
       currentLedLayout = null;
     }
+
+    // The ll-* generator fields above were just set from the saved config
+    // (they have data-key like everything else now), so redraw/recompute
+    // the preview from those actual values instead of leaving stale ones on
+    // screen from before this config loaded.
+    updateLayoutPreview();
   }
 
   function collectForm() {
@@ -752,10 +757,15 @@
   document.getElementById('btnSave').addEventListener('click', function () {
     var btn = this;
     btn.disabled = true;
+    var config = collectForm();
+    // ledlayout (the actual per-LED regions) isn't itself a data-key field -
+    // it's derived from the ledlayout* generator fields collectForm() just
+    // grabbed, via the same computation the preview canvas uses.
+    config.ledlayout = updateLayoutPreview();
     fetch(API_CONFIG, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(collectForm())
+      body: JSON.stringify(config)
     }).then(function (r) {
       return r.json().then(function (body) { return { ok: r.ok, body: body }; });
     }).then(function (result) {
@@ -983,29 +993,6 @@
     }
   });
 
-  document.getElementById('btnSaveLayout').addEventListener('click', function () {
-    var btn = this;
-    var layout = updateLayoutPreview();
-    btn.disabled = true;
-    fetch(API_CONFIG, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ledlayout: layout })
-    }).then(function (r) {
-      return r.json().then(function (body) { return { ok: r.ok, body: body }; });
-    }).then(function (result) {
-      btn.disabled = false;
-      if (result.ok) {
-        toast('Layout saved (' + layout.length + ' LEDs)');
-      } else {
-        toast('Layout save failed: ' + (result.body.error || 'unknown error'), true);
-      }
-    }).catch(function () {
-      btn.disabled = false;
-      toast('Layout save failed: network error', true);
-    });
-  });
-
   // --- WLED discovery + LED-count plausibility check ---
   var API_WLED_DISCOVER = '/api/wled/discover';
   var API_WLED_INFO = '/api/wled/info';
@@ -1140,7 +1127,6 @@
           toast('Configuration imported');
           populateForm(result.body);
           refreshStatus();
-          updateLayoutPreview();
         } else {
           toast('Import failed: ' + (result.body.error || 'unknown error'), true);
         }

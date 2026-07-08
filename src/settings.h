@@ -43,6 +43,22 @@ typedef struct _settings_t {
 
     led_region_t* led_layout;
     int led_count;
+
+    // Parameters behind the web UI's LED layout generator (webui/index.html
+    // buildClassicLayout). The backend never reads these itself - led_layout/
+    // led_count above (the actual per-LED regions) is the only thing capture
+    // uses - they're persisted purely so the web UI can redisplay what you
+    // last entered instead of always showing its built-in example values.
+    int led_layout_top;
+    int led_layout_bottom;
+    int led_layout_left;
+    int led_layout_right;
+    int led_layout_gap_length;
+    int led_layout_gap_position;
+    int led_layout_input_position;
+    int led_layout_group_h;
+    int led_layout_group_v;
+    bool led_layout_reverse;
 } settings_t;
 
 void settings_init(settings_t*);

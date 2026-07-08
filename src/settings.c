@@ -36,6 +36,19 @@ void settings_init(settings_t* settings)
     settings->led_count = LED_LAYOUT_DEFAULT_COUNT;
     settings->led_layout = malloc(sizeof(led_region_t) * (size_t)settings->led_count);
     memcpy(settings->led_layout, led_layout_default, sizeof(led_region_t) * (size_t)settings->led_count);
+
+    // Matches the reference layout above (led_layout_default) so a fresh
+    // install's web UI generator starts from the same known-good example.
+    settings->led_layout_top = 70;
+    settings->led_layout_bottom = 48;
+    settings->led_layout_left = 41;
+    settings->led_layout_right = 41;
+    settings->led_layout_gap_length = 22;
+    settings->led_layout_gap_position = 124;
+    settings->led_layout_input_position = 125;
+    settings->led_layout_group_h = 0;
+    settings->led_layout_group_v = 0;
+    settings->led_layout_reverse = true;
 }
 
 int settings_load_json(settings_t* settings, jvalue_ref source)
@@ -138,6 +151,27 @@ int settings_load_json(settings_t* settings, jvalue_ref source)
         settings->led_count = (int)region_count;
     }
 
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayouttop"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_top);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutbottom"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_bottom);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutleft"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_left);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutright"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_right);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutgaplength"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_gap_length);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutgapposition"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_gap_position);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutinputposition"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_input_position);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutgrouph"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_group_h);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutgroupv"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_layout_group_v);
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutreverse"))) && jis_boolean(value))
+        jboolean_get(value, &settings->led_layout_reverse);
+
     return 0;
 }
 
@@ -181,6 +215,17 @@ int settings_save_json(settings_t* settings, jvalue_ref target)
         jarray_append(led_layout_arr, region);
     }
     jobject_set(target, j_cstr_to_buffer("ledlayout"), led_layout_arr);
+
+    jobject_set(target, j_cstr_to_buffer("ledlayouttop"), jnumber_create_i32(settings->led_layout_top));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutbottom"), jnumber_create_i32(settings->led_layout_bottom));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutleft"), jnumber_create_i32(settings->led_layout_left));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutright"), jnumber_create_i32(settings->led_layout_right));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutgaplength"), jnumber_create_i32(settings->led_layout_gap_length));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutgapposition"), jnumber_create_i32(settings->led_layout_gap_position));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutinputposition"), jnumber_create_i32(settings->led_layout_input_position));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutgrouph"), jnumber_create_i32(settings->led_layout_group_h));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutgroupv"), jnumber_create_i32(settings->led_layout_group_v));
+    jobject_set(target, j_cstr_to_buffer("ledlayoutreverse"), jboolean_create(settings->led_layout_reverse));
 
     return 0;
 }

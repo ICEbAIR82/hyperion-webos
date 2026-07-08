@@ -44,6 +44,12 @@ int webserver_start(uint16_t port)
         free(body);
     });
 
+    g_server->Get("/api/live/leds", [](const httplib::Request&, httplib::Response& res) {
+        char* body = rest_api_get_live_leds();
+        res.set_content(body, "application/json");
+        free(body);
+    });
+
     g_server->Post("/api/start", [](const httplib::Request&, httplib::Response& res) {
         char* body = rest_api_start();
         res.set_content(body, "application/json");

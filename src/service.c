@@ -13,6 +13,7 @@
 #include <luna-service2/lunaservice.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -61,15 +62,25 @@ void* connection_loop(void* data)
     return 0;
 }
 
+// Guards the *contents* of led_rgb_buffer against a torn read from a REST
+// request (service_build_live_leds_json) landing mid-write from the capture
+// thread. Separate from _control_lock below, which guards the buffer's
+// allocation lifetime (alloc/free) instead - the capture thread never touches
+// _control_lock, so a single lock couldn't cover both without either slowing
+// down every frame or risking a read-after-free.
+static pthread_mutex_t _led_buffer_lock = PTHREAD_MUTEX_INITIALIZER;
+
 int service_feed_frame(void* data, int width, int height, uint8_t* rgb_data)
 {
     service_t* service = (service_t*)data;
 
     if (service->settings->direct_led_output) {
         int led_count = service->settings->led_count;
+        pthread_mutex_lock(&_led_buffer_lock);
         led_mapper_compute(rgb_data, width, height, service->settings->led_layout, led_count, service->led_rgb_buffer);
         led_smoother_apply(service->led_rgb_buffer, led_count,
             service->settings->smoothing_rise_time_ms, service->settings->smoothing_fall_time_ms);
+        pthread_mutex_unlock(&_led_buffer_lock);
         if (ddp_sender_send(service->led_rgb_buffer, led_count) != 0) {
             WARN("DDP frame sending failed");
         }
@@ -107,19 +118,6 @@ int service_init(service_t* service, settings_t* settings)
     service->unicapture.callback_nv12 = &service_feed_nv12_frame;
     service->unicapture.callback_data = (void*)service;
     service->unicapture.dump_frames = settings->dump_frames;
-
-    if (settings->direct_led_output) {
-        service->led_rgb_buffer = malloc((size_t)settings->led_count * 3);
-        led_smoother_init(settings->led_count);
-
-        if (ddp_sender_init(settings->wled_address, settings->wled_port) != 0) {
-            WARN("Failed to initialize DDP sender for %s:%d", settings->wled_address, settings->wled_port);
-        } else {
-            INFO("Direct WLED output enabled: sending %d LEDs via DDP to %s:%d (smoothing rise/fall: %d/%dms)",
-                settings->led_count, settings->wled_address, settings->wled_port,
-                settings->smoothing_rise_time_ms, settings->smoothing_fall_time_ms);
-        }
-    }
 
     service_init_backends(service);
 
@@ -202,8 +200,14 @@ void service_destroy_backends(service_t* service)
 
 int service_destroy(service_t* service)
 {
-    service_stop(service);
-    return 0;
+    // Must propagate service_stop's actual return value (0 = was running and
+    // just got stopped, 1 = was already stopped) rather than hardcoding 0:
+    // service_apply_settings_json's `was_running = service_destroy(...) == 0`
+    // check relies on this distinction to decide whether to restart the
+    // service afterwards. Discarding it here made "was_running" always true,
+    // so saving settings while the service was stopped would incorrectly
+    // start it.
+    return service_stop(service);
 }
 
 // Guards service_start/service_stop/service_apply_settings_json so that two
@@ -225,21 +229,56 @@ static void _control_lock_init(void)
 
 static int _service_start_impl(service_t* service)
 {
+    settings_t* settings = service->settings;
+
     if (service->running) {
+        // Not an error - the service is already in the requested state. Kept
+        // as its own return code (1) rather than 0, since service_apply_settings_json
+        // uses service_destroy()'s return value to tell "was running" (0) apart
+        // from "was already stopped" (1). Callers that just want a plain
+        // success/fail signal (Luna methods, REST) treat both as success.
         return 1;
     }
 
     service_init_backends(service);
+
+    // The direct-output resources must be (re)created on every start, not in
+    // service_init: service_stop frees them, and start/stop can cycle many
+    // times per init (Start/Stop buttons, TV standby/resume power callback).
+    // Allocating them only in init left the capture thread feeding a NULL
+    // buffer and a closed DDP socket after any stop -> start cycle.
+    if (settings->direct_led_output) {
+        service->led_rgb_buffer = malloc((size_t)settings->led_count * 3);
+        if (service->led_rgb_buffer == NULL) {
+            ERR("Failed to allocate LED color buffer (%d LEDs)", settings->led_count);
+            return -1;
+        }
+        led_smoother_init(settings->led_count);
+
+        if (ddp_sender_init(settings->wled_address, settings->wled_port) != 0) {
+            WARN("Failed to initialize DDP sender for %s:%d", settings->wled_address, settings->wled_port);
+        } else {
+            INFO("Direct WLED output enabled: sending %d LEDs via DDP to %s:%d (smoothing rise/fall: %d/%dms)",
+                settings->led_count, settings->wled_address, settings->wled_port,
+                settings->smoothing_rise_time_ms, settings->smoothing_fall_time_ms);
+        }
+    }
 
     service->running = true;
     int res = unicapture_start(&service->unicapture);
 
     if (res != 0) {
         service->running = false;
+        if (settings->direct_led_output) {
+            ddp_sender_close();
+            led_smoother_close();
+            free(service->led_rgb_buffer);
+            service->led_rgb_buffer = NULL;
+        }
         return res;
     }
 
-    if (!service->settings->direct_led_output) {
+    if (!settings->direct_led_output) {
         service->connection_loop_running = true;
         if (pthread_create(&service->connection_thread, NULL, connection_loop, service) != 0) {
             unicapture_stop(&service->unicapture);
@@ -263,6 +302,8 @@ int service_start(service_t* service)
 static int _service_stop_impl(service_t* service)
 {
     if (!service->running) {
+        // Same reasoning as in _service_start_impl: return 1 (not an error,
+        // just "already stopped"), distinct from 0 ("was running, now stopped").
         return 1;
     }
 
@@ -307,7 +348,10 @@ bool service_method_start(LSHandle* sh, LSMessage* msg, void* data)
 
     jvalue_ref jobj = jobject_create();
 
-    jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(service_start(service) == 0));
+    // 0 = transitioned to running, 1 = was already running - both count as
+    // success from a caller's point of view; only a negative return is a
+    // real failure.
+    jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(service_start(service) >= 0));
 
     LSMessageReply(sh, msg, jvalue_tostring_simple(jobj), &lserror);
 
@@ -323,7 +367,7 @@ bool service_method_stop(LSHandle* sh, LSMessage* msg, void* data)
 
     jvalue_ref jobj = jobject_create();
 
-    jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(service_stop(service) == 0));
+    jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(service_stop(service) >= 0));
 
     LSMessageReply(sh, msg, jvalue_tostring_simple(jobj), &lserror);
 
@@ -349,6 +393,46 @@ jvalue_ref service_build_status_json(service_t* service)
     jobject_set(jobj, j_cstr_to_buffer("ddpFramesSent"), jnumber_create_i64((int64_t)ddp_sender_frames_sent()));
     jobject_set(jobj, j_cstr_to_buffer("ddpLastSendOk"), jboolean_create(ddp_sender_last_send_ok()));
 
+    jobject_set(jobj, j_cstr_to_buffer("directOutput"), jboolean_create(service->settings->direct_led_output));
+    jobject_set(jobj, j_cstr_to_buffer("wledAddress"), jstring_create(service->settings->wled_address));
+
+    return jobj;
+}
+
+jvalue_ref service_build_live_leds_json(service_t* service)
+{
+    // _control_lock (not just _led_buffer_lock) is required here too: it's
+    // what guarantees led_rgb_buffer can't be freed out from under us by a
+    // concurrent stop/settings-apply between the NULL-check and the memcpy
+    // below - the same hazard already fixed once for PUT /api/config.
+    pthread_once(&_control_lock_once, _control_lock_init);
+    pthread_mutex_lock(&_control_lock);
+
+    jvalue_ref leds = jarray_create(NULL);
+    if (service->running && service->settings->direct_led_output && service->led_rgb_buffer != NULL) {
+        int led_count = service->settings->led_count;
+        uint8_t* snapshot = malloc((size_t)led_count * 3);
+        if (snapshot != NULL) {
+            pthread_mutex_lock(&_led_buffer_lock);
+            memcpy(snapshot, service->led_rgb_buffer, (size_t)led_count * 3);
+            pthread_mutex_unlock(&_led_buffer_lock);
+
+            for (int i = 0; i < led_count; i++) {
+                jvalue_ref triple = jarray_create(NULL);
+                jarray_append(triple, jnumber_create_i32(snapshot[i * 3 + 0]));
+                jarray_append(triple, jnumber_create_i32(snapshot[i * 3 + 1]));
+                jarray_append(triple, jnumber_create_i32(snapshot[i * 3 + 2]));
+                jarray_append(leds, triple);
+            }
+            free(snapshot);
+        }
+    }
+
+    pthread_mutex_unlock(&_control_lock);
+
+    jvalue_ref jobj = jobject_create();
+    jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(true));
+    jobject_set(jobj, j_cstr_to_buffer("leds"), leds);
     return jobj;
 }
 
@@ -368,6 +452,7 @@ static int _service_apply_settings_json_impl(service_t* service, jvalue_ref pars
     // any of that - otherwise the capture thread can race a free() of the old
     // led_layout array, or read a torn led_layout/led_count pair.
     bool was_running = service_destroy(service) == 0;
+    INFO("Applying settings: was_running=%d", was_running);
 
     int res = settings_load_json(service->settings, parsed);
     if (res == 0) {
@@ -394,7 +479,8 @@ static int _service_apply_settings_json_impl(service_t* service, jvalue_ref pars
     service_init(service, service->settings);
 
     if (was_running) {
-        service_start(service);
+        int start_res = service_start(service);
+        INFO("Restarted service after settings apply: result=%d", start_res);
     }
 
     return res;

@@ -35,6 +35,17 @@ char* rest_api_get_status(void)
     return result;
 }
 
+char* rest_api_get_live_leds(void)
+{
+    if (!_service)
+        return strdup("{\"returnValue\":false,\"leds\":[]}");
+
+    jvalue_ref jobj = service_build_live_leds_json(_service);
+    char* result = strdup(jvalue_tostring_simple(jobj));
+    j_release(&jobj);
+    return result;
+}
+
 int rest_api_put_config(const char* body, char** out_response)
 {
     if (!_service) {
@@ -71,7 +82,8 @@ char* rest_api_start(void)
     if (!_service)
         return strdup("{\"returnValue\":false}");
 
-    bool ok = service_start(_service) == 0;
+    // 0 = transitioned to running, 1 = was already running - both are success.
+    bool ok = service_start(_service) >= 0;
     char* result = malloc(32);
     snprintf(result, 32, "{\"returnValue\":%s}", ok ? "true" : "false");
     return result;
@@ -82,7 +94,7 @@ char* rest_api_stop(void)
     if (!_service)
         return strdup("{\"returnValue\":false}");
 
-    bool ok = service_stop(_service) == 0;
+    bool ok = service_stop(_service) >= 0;
     char* result = malloc(32);
     snprintf(result, 32, "{\"returnValue\":%s}", ok ? "true" : "false");
     return result;

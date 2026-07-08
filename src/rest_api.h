@@ -12,6 +12,9 @@ void rest_api_init(service_t* service);
 char* rest_api_get_config(void);
 char* rest_api_get_status(void);
 
+// Malloc'd JSON: {"returnValue":true,"leds":[[r,g,b],...]}. Caller must free().
+char* rest_api_get_live_leds(void);
+
 // body is the raw JSON request body of a PUT /api/config request. Writes a
 // malloc'd JSON response into *out_response (caller must free()) and returns
 // an HTTP status code (200 on success, 400 on a parse/apply failure).

@@ -3,34 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>PicCap+</title>
+<title>PicCap-Plus</title>
 <style>
+  /* Palette matches the TV app's own settings screen (frontend/css/basicui.css):
+     neutral dark gray background, white text. Deliberately dark-only, not
+     dark/light - the TV app itself has no light mode either, and a page that
+     switched to white-on-white with the system theme stopped looking like
+     the same product. Accent/danger are muted, desaturated tones (not the
+     TV app's neon focus-ring gold/pure red) since a whole filled button in
+     a pure saturated color reads as garish where a thin focus outline doesn't. */
   :root {
-    color-scheme: dark light;
-    --bg: #14161a;
-    --card: #1d2026;
-    --card-border: #2b2f38;
-    --text: #eef0f3;
-    --text-dim: #9aa2b1;
-    --accent: #5b9dff;
-    --accent-text: #06111f;
+    color-scheme: dark;
+    --bg: #3e3e3e;
+    --card: #4a4a4a;
+    --card-border: #5c5c5c;
+    --text: #ffffff;
+    --text-dim: #c7c7c7;
+    --accent: #e3b341;
+    --accent-text: #1a1a1a;
     --ok: #3ecf8e;
-    --warn: #f5a623;
-    --err: #f2545b;
-    --input-bg: #14161a;
+    --warn: #ff9800;
+    --err: #da3633;
+    --input-bg: #3a3a3a;
     --radius: 14px;
-  }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f4f5f7;
-      --card: #ffffff;
-      --card-border: #e2e5ea;
-      --text: #1a1d22;
-      --text-dim: #666d7a;
-      --accent: #2b6fef;
-      --accent-text: #ffffff;
-      --input-bg: #f4f5f7;
-    }
   }
   * { box-sizing: border-box; }
   html, body {
@@ -157,13 +152,17 @@
     color: var(--text-dim);
   }
   .field input[type="text"],
-  .field input[type="number"] {
-    background: var(--input-bg);
+  .field input[type="number"],
+  .field select {
+    /* Always white-on-black, matching the TV app's text inputs regardless of
+       light/dark theme - not tied to --input-bg/--text like the rest of this
+       page's dark/light variants. */
+    background: #ffffff;
+    color: #000000;
     border: 1px solid var(--card-border);
     border-radius: 8px;
     padding: 10px 12px;
     font-size: 1rem;
-    color: var(--text);
     min-height: 44px;
     width: 100%;
   }
@@ -307,7 +306,7 @@
 <div class="wrap">
 
   <header>
-    <h1>PicCap+</h1>
+    <h1>PicCap-Plus</h1>
     <span class="badge"><span id="runDot" class="dot"></span><span id="runLabel">unknown</span></span>
   </header>
 
@@ -412,12 +411,20 @@
 
       <div class="row2">
         <div class="field">
-          <label for="f-backend">Video backend</label>
-          <input type="text" id="f-backend" data-key="backend" data-type="string" placeholder="auto">
+          <label for="f-backend">Video capture backend</label>
+          <select id="f-backend" data-key="backend" data-type="string">
+            <option value="auto">Automatic detection</option>
+            <option value="libdile_vt">libdile_vt (WebOS 3.x+)</option>
+            <option value="libvtcapture">libvtcapture (WebOS 5.x+)</option>
+          </select>
         </div>
         <div class="field">
-          <label for="f-uibackend">UI backend</label>
-          <input type="text" id="f-uibackend" data-key="uibackend" data-type="string" placeholder="auto">
+          <label for="f-uibackend">UI capture backend</label>
+          <select id="f-uibackend" data-key="uibackend" data-type="string">
+            <option value="auto">Automatic detection</option>
+            <option value="libgm">libgm (WebOS 3.x+)</option>
+            <option value="libhalgal">libhalgal (WebOS 5.x+)</option>
+          </select>
         </div>
       </div>
 
@@ -427,14 +434,26 @@
           <input type="number" id="f-fps" data-key="fps" data-type="int">
         </div>
         <div class="field">
-          <label for="f-width">Capture width</label>
-          <input type="number" id="f-width" data-key="width" data-type="int">
+          <label for="f-resolution">Resolution</label>
+          <select id="f-resolution">
+            <option value="320x180">320x180</option>
+            <option value="256x144">256x144</option>
+            <option value="192x108">192x108</option>
+            <option value="128x78">128x78</option>
+            <option value="manual">Manual</option>
+          </select>
         </div>
       </div>
 
-      <div class="field">
-        <label for="f-height">Capture height</label>
-        <input type="number" id="f-height" data-key="height" data-type="int">
+      <div class="row2" id="f-manual-resolution" style="display:none">
+        <div class="field">
+          <label for="f-width">Capture width</label>
+          <input type="number" id="f-width" data-key="width" data-type="int">
+        </div>
+        <div class="field">
+          <label for="f-height">Capture height</label>
+          <input type="number" id="f-height" data-key="height" data-type="int">
+        </div>
       </div>
 
       <div class="switch-field">
@@ -490,70 +509,91 @@
   </section>
 
   <section class="card">
-    <h2>LED-Layout</h2>
+    <h2>LED Layout</h2>
 
     <div class="row2">
       <div class="field">
-        <label for="ll-top">Oben</label>
+        <label for="ll-top">Top</label>
         <input type="number" id="ll-top" min="0" value="70">
       </div>
       <div class="field">
-        <label for="ll-bottom">Unten</label>
+        <label for="ll-bottom">Bottom</label>
         <input type="number" id="ll-bottom" min="0" value="48">
       </div>
     </div>
     <div class="row2">
       <div class="field">
-        <label for="ll-left">Links</label>
+        <label for="ll-left">Left</label>
         <input type="number" id="ll-left" min="0" value="41">
       </div>
       <div class="field">
-        <label for="ll-right">Rechts</label>
+        <label for="ll-right">Right</label>
         <input type="number" id="ll-right" min="0" value="41">
       </div>
     </div>
     <div class="row2">
       <div class="field">
-        <label for="ll-gaplen">Lückenlänge</label>
+        <label for="ll-gaplen">Gap length</label>
         <input type="number" id="ll-gaplen" min="0" value="22">
       </div>
       <div class="field">
-        <label for="ll-gappos">Lückenposition</label>
+        <label for="ll-gappos">Gap position</label>
         <input type="number" id="ll-gappos" min="0" value="124">
       </div>
     </div>
     <div class="row2">
       <div class="field">
-        <label for="ll-inputpos">Eingabeposition</label>
+        <label for="ll-inputpos">Input position</label>
         <input type="number" id="ll-inputpos" min="0" value="125">
       </div>
       <div class="field">
-        <label for="ll-groupv">Gruppe vertikal</label>
+        <label for="ll-groupv">Vertical grouping</label>
         <input type="number" id="ll-groupv" min="0" value="0">
       </div>
     </div>
     <div class="row2">
       <div class="field">
-        <label for="ll-grouph">Gruppe horizontal</label>
+        <label for="ll-grouph">Horizontal grouping</label>
         <input type="number" id="ll-grouph" min="0" value="0">
       </div>
       <div></div>
     </div>
 
     <div class="switch-field">
-      <label for="ll-reverse">Richtung umkehren</label>
+      <label for="ll-reverse">Reverse direction</label>
       <label class="switch">
         <input type="checkbox" id="ll-reverse" checked>
         <span class="track"></span>
       </label>
     </div>
 
+    <div class="switch-field">
+      <div>
+        <label for="liveViewToggle">Live colors</label>
+        <span class="hint">Shows the actual colors currently being sent to WLED (for the saved layout) instead of this preview - layout edits won't be visible here until you turn it back off</span>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="liveViewToggle">
+        <span class="track"></span>
+      </label>
+    </div>
+
     <div class="field">
-      <label id="llCount">Gesamt-LEDs: -</label>
+      <label id="llCount">Total LEDs: -</label>
       <canvas id="llCanvas" style="width:100%;height:auto;border-radius:8px;background:#05070a;touch-action:none;"></canvas>
     </div>
 
-    <button id="btnSaveLayout" class="primary" style="width:100%">Layout speichern</button>
+    <button id="btnSaveLayout" class="primary" style="width:100%">Save layout</button>
+  </section>
+
+  <section class="card">
+    <h2>Backup</h2>
+    <div class="btn-row">
+      <button id="btnExportConfig" type="button">Export configuration</button>
+      <button id="btnImportConfig" type="button">Import configuration</button>
+    </div>
+    <input type="file" id="importConfigFile" accept="application/json" style="display:none">
+    <span class="hint">Export saves the full current configuration (including LED layout) as a JSON file. Import applies a previously exported file.</span>
   </section>
 
   <div class="save-bar">
@@ -570,6 +610,13 @@
   var API_STATUS = '/api/status';
   var API_START = '/api/start';
   var API_STOP = '/api/stop';
+  var API_LIVE_LEDS = '/api/live/leds';
+
+  // The currently active LED layout (region geometry), so the live-color view
+  // can draw each color in its actual on-screen position. Kept in sync with
+  // whatever populateForm() last loaded - not the unsaved draft in the LED
+  // Layout editor below, which may not match what the service is running yet.
+  var currentLedLayout = null;
 
   var toastEl = document.getElementById('toast');
   var toastTimer = null;
@@ -598,11 +645,27 @@
       }
     });
 
+    // width/height (data-key fields above) map to one of the TV app's preset
+    // resolutions by area, same magic numbers as frontend/js/servicecalls.js
+    // getSettings() - anything else falls back to "Manual" with the raw
+    // width/height fields shown.
+    var resSelect = document.getElementById('f-resolution');
+    var manualRow = document.getElementById('f-manual-resolution');
+    switch (config.width * config.height) {
+      case 57600: resSelect.value = '320x180'; manualRow.style.display = 'none'; break;
+      case 36864: resSelect.value = '256x144'; manualRow.style.display = 'none'; break;
+      case 20736: resSelect.value = '192x108'; manualRow.style.display = 'none'; break;
+      case 9984: resSelect.value = '128x78'; manualRow.style.display = 'none'; break;
+      default: resSelect.value = 'manual'; manualRow.style.display = ''; break;
+    }
+
     var ledInfo = document.getElementById('ledLayoutInfo');
     if (Array.isArray(config.ledlayout)) {
       ledInfo.textContent = config.ledlayout.length + ' LEDs configured';
+      currentLedLayout = config.ledlayout;
     } else {
       ledInfo.textContent = 'not configured';
+      currentLedLayout = null;
     }
   }
 
@@ -622,6 +685,29 @@
     });
     return out;
   }
+
+  // Resolution presets mirror the TV app's own dropdown (frontend/index.html
+  // selectSettingsResolution) exactly, so switching to a preset here writes
+  // the same width/height data-key fields collectForm() already knows to
+  // pick up - no special-casing needed on the save path.
+  var RESOLUTION_PRESETS = {
+    '320x180': [320, 180],
+    '256x144': [256, 144],
+    '192x108': [192, 108],
+    '128x78': [128, 78]
+  };
+
+  document.getElementById('f-resolution').addEventListener('change', function () {
+    var manualRow = document.getElementById('f-manual-resolution');
+    var preset = RESOLUTION_PRESETS[this.value];
+    if (preset) {
+      manualRow.style.display = 'none';
+      document.getElementById('f-width').value = preset[0];
+      document.getElementById('f-height').value = preset[1];
+    } else {
+      manualRow.style.display = '';
+    }
+  });
 
   function applyStatus(st) {
     var running = !!st.isRunning;
@@ -773,10 +859,16 @@
     };
   }
 
+  // Single shared canvas for both the layout editor's draft preview (rainbow
+  // by index, from the form fields below) and the live-colors view (real
+  // captured colors, from /api/live/leds) - one "here's what the ring looks
+  // like" area instead of two, toggled by the "Live colors" switch.
   var llCanvas = document.getElementById('llCanvas');
   var llCtx = llCanvas.getContext('2d');
+  var liveViewToggle = document.getElementById('liveViewToggle');
+  var livePolling = null;
 
-  function drawLayout(layout) {
+  function renderRing(layout, getColor, markFirst) {
     var cssWidth = llCanvas.clientWidth || 320;
     var cssHeight = Math.round(cssWidth * 9 / 16);
     var dpr = window.devicePixelRatio || 1;
@@ -813,11 +905,10 @@
       if (isLeft && !isTop && !isBottom) { px0 = sx - ledDepthPx; px1 = sx; }
       else if (isRight && !isTop && !isBottom) { px0 = sx + sw; px1 = sx + sw + ledDepthPx; }
 
-      var hue = n > 1 ? Math.round((i / n) * 300) : 0;
-      llCtx.fillStyle = 'hsl(' + hue + ', 85%, 55%)';
+      llCtx.fillStyle = getColor(i, n);
       llCtx.fillRect(px0, py0, Math.max(1, px1 - px0), Math.max(1, py1 - py0));
 
-      if (i === 0) {
+      if (i === 0 && markFirst) {
         llCtx.fillStyle = '#000';
         llCtx.fillRect(px0, py0, Math.max(2, px1 - px0), Math.max(2, py1 - py0));
         llCtx.fillStyle = '#fff';
@@ -827,11 +918,40 @@
     });
   }
 
+  function drawLayout(layout) {
+    renderRing(layout, function (i, n) {
+      var hue = n > 1 ? Math.round((i / n) * 300) : 0;
+      return 'hsl(' + hue + ', 85%, 55%)';
+    }, true);
+  }
+
+  function drawLiveLeds(colors) {
+    if (!currentLedLayout || !colors || colors.length === 0) {
+      renderRing([], function () { return '#000'; }, false);
+      return;
+    }
+    var n = Math.min(currentLedLayout.length, colors.length);
+    renderRing(currentLedLayout.slice(0, n), function (i) {
+      var c = colors[i];
+      return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+    }, false);
+  }
+
+  function pollLiveLeds() {
+    fetch(API_LIVE_LEDS).then(function (r) { return r.json(); }).then(function (result) {
+      drawLiveLeds(result.leds || []);
+    }).catch(function () {
+      // Transient network hiccup during polling - next tick will retry.
+    });
+  }
+
   function updateLayoutPreview() {
     var p = readLayoutParams();
     var layout = buildClassicLayout(p);
-    document.getElementById('llCount').textContent = 'Gesamt-LEDs: ' + layout.length;
-    drawLayout(layout);
+    document.getElementById('llCount').textContent = 'Total LEDs: ' + layout.length;
+    if (!liveViewToggle.checked) {
+      drawLayout(layout);
+    }
     return layout;
   }
 
@@ -839,7 +959,29 @@
     'll-inputpos', 'll-grouph', 'll-groupv', 'll-reverse'].forEach(function (id) {
     document.getElementById(id).addEventListener('input', updateLayoutPreview);
   });
-  window.addEventListener('resize', updateLayoutPreview);
+  window.addEventListener('resize', function () {
+    if (liveViewToggle.checked) {
+      pollLiveLeds();
+    } else {
+      updateLayoutPreview();
+    }
+  });
+
+  liveViewToggle.addEventListener('change', function () {
+    if (this.checked) {
+      if (!currentLedLayout) {
+        toast('No LED layout configured yet', true);
+        this.checked = false;
+        return;
+      }
+      pollLiveLeds();
+      livePolling = setInterval(pollLiveLeds, 300);
+    } else {
+      clearInterval(livePolling);
+      livePolling = null;
+      updateLayoutPreview();
+    }
+  });
 
   document.getElementById('btnSaveLayout').addEventListener('click', function () {
     var btn = this;
@@ -949,6 +1091,64 @@
       resultEl.textContent = 'Check failed: network error';
       resultEl.className = 'hint err';
     });
+  });
+
+  // --- Config export/import ---
+  document.getElementById('btnExportConfig').addEventListener('click', function () {
+    fetch(API_CONFIG).then(function (r) { return r.json(); }).then(function (config) {
+      var blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'piccapplus-config.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast('Configuration exported');
+    }).catch(function () {
+      toast('Export failed', true);
+    });
+  });
+
+  document.getElementById('btnImportConfig').addEventListener('click', function () {
+    document.getElementById('importConfigFile').click();
+  });
+
+  document.getElementById('importConfigFile').addEventListener('change', function () {
+    var file = this.files[0];
+    this.value = '';
+    if (!file) return;
+
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed;
+      try {
+        parsed = JSON.parse(reader.result);
+      } catch (e) {
+        toast('Import failed: invalid JSON file', true);
+        return;
+      }
+      fetch(API_CONFIG, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      }).then(function (r) {
+        return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+      }).then(function (result) {
+        if (result.ok) {
+          toast('Configuration imported');
+          populateForm(result.body);
+          refreshStatus();
+          updateLayoutPreview();
+        } else {
+          toast('Import failed: ' + (result.body.error || 'unknown error'), true);
+        }
+      }).catch(function () {
+        toast('Import failed: network error', true);
+      });
+    };
+    reader.readAsText(file);
   });
 
   loadConfig();

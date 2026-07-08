@@ -47,6 +47,11 @@ int service_destroy(service_t* service);
 jvalue_ref service_build_status_json(service_t* service);
 jvalue_ref service_build_settings_json(service_t* service);
 
+// Snapshot of the current per-LED colors (post-smoothing, the same values
+// just sent to WLED), as {"returnValue":true,"leds":[[r,g,b],...]}. Empty
+// array if the service isn't running or isn't in direct-LED-output mode.
+jvalue_ref service_build_live_leds_json(service_t* service);
+
 // Applies a (partial) settings JSON, persists it, and cleanly restarts the
 // service if it was already running. Returns 0 on success.
 int service_apply_settings_json(service_t* service, jvalue_ref parsed);

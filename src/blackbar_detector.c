@@ -13,7 +13,7 @@
 #define MAX_BAR_FRACTION 0.25f
 // A newly detected border size must repeat for this many consecutive frames
 // before it's actually applied to the LED mapping, so a momentary dark
-// scene or scene-cut doesn't visibly jitter the ambilight edges.
+// scene or scene-cut doesn't visibly jitter the LED edges.
 #define STABILITY_FRAMES 30
 
 static int _stable_top = 0, _stable_bottom = 0, _stable_left = 0, _stable_right = 0;

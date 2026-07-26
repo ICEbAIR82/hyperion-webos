@@ -1,11 +1,14 @@
 #pragma once
 
+#include "led_layout.h"
 #include "settings.h"
 #include "unicapture.h"
 #include <glib.h>
+#include <luna-service2/lunaservice.h>
 #include <pthread.h>
 
 #define SERVICE_NAME "org.webosbrew.piccapplus.service"
+#define APP_ID "org.webosbrew.piccapplus"
 
 typedef struct {
     bool running;
@@ -23,11 +26,29 @@ typedef struct {
     settings_t* settings;
 
     uint8_t* led_rgb_buffer;
+    // Scratch copy of settings->led_layout, remapped onto the currently
+    // detected active picture area when letterbox_detection is on. Same
+    // lifetime as led_rgb_buffer (allocated/freed alongside it).
+    led_region_t* remapped_led_layout;
 
     pthread_t connection_thread;
     bool connection_loop_running;
 
     GMainLoop* loop;
+
+    // Whichever bus registration succeeded in service_register (public
+    // preferred, legacy private-bus as fallback) - kept around so
+    // service_start_calibration can ask applicationManager to foreground the
+    // TV app from a REST request, without re-registering anything.
+    LSHandle* handle;
+
+    // White-balance calibration mode: ephemeral, in-memory only (not a
+    // setting, doesn't survive a restart). While active, the TV app shows a
+    // fullscreen solid color instead of its normal UI - it picks this up via
+    // its existing status poll, see service_build_status_json. The color is
+    // just relayed as-is; this code never interprets it.
+    bool calibration_active;
+    char calibration_color[16];
 } service_t;
 
 int service_init(service_t* service, settings_t* settings);
@@ -55,3 +76,16 @@ jvalue_ref service_build_live_leds_json(service_t* service);
 // Applies a (partial) settings JSON, persists it, and cleanly restarts the
 // service if it was already running. Returns 0 on success.
 int service_apply_settings_json(service_t* service, jvalue_ref parsed);
+
+// Enters/exits white-balance calibration mode: starting it also asks
+// applicationManager to bring the TV app to the foreground, so the user
+// actually sees the fullscreen color it's about to display. color is an
+// arbitrary CSS color string (e.g. "#ffffff"), copied as-is - not
+// interpreted or validated here.
+void service_start_calibration(service_t* service, const char* color);
+void service_stop_calibration(service_t* service);
+
+// Updates white/color balance gains in-memory only, without a restart -
+// see the definition in service.c for why this needs to be separate from
+// service_apply_settings_json. Returns 0 on success.
+int service_apply_whitebalance_live(service_t* service, int wb_red, int wb_green, int wb_blue);

@@ -44,8 +44,26 @@ int webserver_start(uint16_t port)
         free(body);
     });
 
+    g_server->Put("/api/whitebalance", [](const httplib::Request& req, httplib::Response& res) {
+        char* body = rest_api_put_whitebalance_live(req.body.c_str());
+        res.set_content(body, "application/json");
+        free(body);
+    });
+
     g_server->Get("/api/live/leds", [](const httplib::Request&, httplib::Response& res) {
         char* body = rest_api_get_live_leds();
+        res.set_content(body, "application/json");
+        free(body);
+    });
+
+    g_server->Post("/api/calibrate/start", [](const httplib::Request& req, httplib::Response& res) {
+        char* body = rest_api_calibrate_start(req.body.c_str());
+        res.set_content(body, "application/json");
+        free(body);
+    });
+
+    g_server->Post("/api/calibrate/stop", [](const httplib::Request&, httplib::Response& res) {
+        char* body = rest_api_calibrate_stop();
         res.set_content(body, "application/json");
         free(body);
     });
@@ -76,6 +94,14 @@ int webserver_start(uint16_t port)
     g_server->Get("/api/wled/info", [](const httplib::Request& req, httplib::Response& res) {
         std::string ip = req.get_param_value("ip");
         char* body = rest_api_wled_info(ip.c_str());
+        res.set_content(body, "application/json");
+        free(body);
+    });
+
+    g_server->Get("/api/logs", [](const httplib::Request& req, httplib::Response& res) {
+        std::string since = req.get_param_value("since");
+        std::string boot = req.get_param_value("boot");
+        char* body = rest_api_get_logs(since.c_str(), boot.c_str());
         res.set_content(body, "application/json");
         free(body);
     });

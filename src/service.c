@@ -1,4 +1,5 @@
 #include "service.h"
+#include "blackbar_detector.h"
 #include "ddp_sender.h"
 #include "hyperion_client.h"
 #include "json_rpc_client.h"
@@ -6,6 +7,7 @@
 #include "led_smoother.h"
 #include "log.h"
 #include "pthread.h"
+#include "scene_dimmer.h"
 #include "settings.h"
 #include "unicapture.h"
 #include "version.h"
@@ -67,8 +69,38 @@ void* connection_loop(void* data)
 // thread. Separate from _control_lock below, which guards the buffer's
 // allocation lifetime (alloc/free) instead - the capture thread never touches
 // _control_lock, so a single lock couldn't cover both without either slowing
-// down every frame or risking a read-after-free.
+// down every frame or risking a read-after-free. Also guards settings->wb_*,
+// which service_apply_whitebalance_live() below updates live from a REST
+// thread without going through the usual (restart-triggering) settings-apply
+// path - reusing this lock instead of adding a third one for three plain ints.
 static pthread_mutex_t _led_buffer_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static uint8_t apply_gain(uint8_t value, int gain_percent)
+{
+    int scaled = (value * gain_percent) / 100;
+    if (scaled < 0)
+        return 0;
+    if (scaled > 255)
+        return 255;
+    return (uint8_t)scaled;
+}
+
+static void apply_white_balance(uint8_t* buffer, int led_count, int gain_r, int gain_g, int gain_b)
+{
+    for (int i = 0; i < led_count; i++) {
+        buffer[i * 3 + 0] = apply_gain(buffer[i * 3 + 0], gain_r);
+        buffer[i * 3 + 1] = apply_gain(buffer[i * 3 + 1], gain_g);
+        buffer[i * 3 + 2] = apply_gain(buffer[i * 3 + 2], gain_b);
+    }
+}
+
+static void apply_scene_dimming(uint8_t* buffer, int led_count, float gain)
+{
+    int gain_percent = (int)(gain * 100.0f + 0.5f);
+    for (int i = 0; i < led_count * 3; i++) {
+        buffer[i] = apply_gain(buffer[i], gain_percent);
+    }
+}
 
 int service_feed_frame(void* data, int width, int height, uint8_t* rgb_data)
 {
@@ -76,10 +108,23 @@ int service_feed_frame(void* data, int width, int height, uint8_t* rgb_data)
 
     if (service->settings->direct_led_output) {
         int led_count = service->settings->led_count;
+        const led_region_t* layout = service->settings->led_layout;
+
         pthread_mutex_lock(&_led_buffer_lock);
-        led_mapper_compute(rgb_data, width, height, service->settings->led_layout, led_count, service->led_rgb_buffer);
+        if (service->settings->letterbox_detection) {
+            active_area_t area = blackbar_detector_update(rgb_data, width, height);
+            led_mapper_remap_to_active_area(layout, led_count, area, service->remapped_led_layout);
+            layout = service->remapped_led_layout;
+        }
+        led_mapper_compute(rgb_data, width, height, layout, led_count, service->led_rgb_buffer);
         led_smoother_apply(service->led_rgb_buffer, led_count,
             service->settings->smoothing_rise_time_ms, service->settings->smoothing_fall_time_ms);
+        apply_white_balance(service->led_rgb_buffer, led_count,
+            service->settings->wb_red, service->settings->wb_green, service->settings->wb_blue);
+        if (service->settings->scene_dimming) {
+            float gain = scene_dimmer_compute_gain(rgb_data, width, height);
+            apply_scene_dimming(service->led_rgb_buffer, led_count, gain);
+        }
         pthread_mutex_unlock(&_led_buffer_lock);
         if (ddp_sender_send(service->led_rgb_buffer, led_count) != 0) {
             WARN("DDP frame sending failed");
@@ -249,11 +294,18 @@ static int _service_start_impl(service_t* service)
     // buffer and a closed DDP socket after any stop -> start cycle.
     if (settings->direct_led_output) {
         service->led_rgb_buffer = malloc((size_t)settings->led_count * 3);
-        if (service->led_rgb_buffer == NULL) {
-            ERR("Failed to allocate LED color buffer (%d LEDs)", settings->led_count);
+        service->remapped_led_layout = malloc(sizeof(led_region_t) * (size_t)settings->led_count);
+        if (service->led_rgb_buffer == NULL || service->remapped_led_layout == NULL) {
+            ERR("Failed to allocate LED color/layout buffers (%d LEDs)", settings->led_count);
+            free(service->led_rgb_buffer);
+            service->led_rgb_buffer = NULL;
+            free(service->remapped_led_layout);
+            service->remapped_led_layout = NULL;
             return -1;
         }
         led_smoother_init(settings->led_count);
+        blackbar_detector_reset();
+        scene_dimmer_reset();
 
         if (ddp_sender_init(settings->wled_address, settings->wled_port) != 0) {
             WARN("Failed to initialize DDP sender for %s:%d", settings->wled_address, settings->wled_port);
@@ -274,6 +326,8 @@ static int _service_start_impl(service_t* service)
             led_smoother_close();
             free(service->led_rgb_buffer);
             service->led_rgb_buffer = NULL;
+            free(service->remapped_led_layout);
+            service->remapped_led_layout = NULL;
         }
         return res;
     }
@@ -323,6 +377,8 @@ static int _service_stop_impl(service_t* service)
         led_smoother_close();
         free(service->led_rgb_buffer);
         service->led_rgb_buffer = NULL;
+        free(service->remapped_led_layout);
+        service->remapped_led_layout = NULL;
     }
     service->running = false;
 
@@ -375,6 +431,27 @@ bool service_method_stop(LSHandle* sh, LSMessage* msg, void* data)
     return false;
 }
 
+// Luna-side counterpart to the REST-only POST /api/calibrate/stop - needed so
+// the TV app itself (which talks to the service over the Luna bus, not REST)
+// can exit calibration mode when the remote is pressed while the fullscreen
+// test color is showing, without a round trip through the web UI.
+bool service_method_stop_calibration(LSHandle* sh, LSMessage* msg, void* data)
+{
+    service_t* service = (service_t*)data;
+    LSError lserror;
+    LSErrorInit(&lserror);
+
+    service_stop_calibration(service);
+
+    jvalue_ref jobj = jobject_create();
+    jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(true));
+
+    LSMessageReply(sh, msg, jvalue_tostring_simple(jobj), &lserror);
+
+    j_release(&jobj);
+    return false;
+}
+
 jvalue_ref service_build_status_json(service_t* service)
 {
     jvalue_ref jobj = jobject_create();
@@ -395,6 +472,11 @@ jvalue_ref service_build_status_json(service_t* service)
 
     jobject_set(jobj, j_cstr_to_buffer("directOutput"), jboolean_create(service->settings->direct_led_output));
     jobject_set(jobj, j_cstr_to_buffer("wledAddress"), jstring_create(service->settings->wled_address));
+
+    pthread_mutex_lock(&_led_buffer_lock);
+    jobject_set(jobj, j_cstr_to_buffer("calibrationActive"), jboolean_create(service->calibration_active));
+    jobject_set(jobj, j_cstr_to_buffer("calibrationColor"), jstring_create(service->calibration_color));
+    pthread_mutex_unlock(&_led_buffer_lock);
 
     return jobj;
 }
@@ -434,6 +516,71 @@ jvalue_ref service_build_live_leds_json(service_t* service)
     jobject_set(jobj, j_cstr_to_buffer("returnValue"), jboolean_create(true));
     jobject_set(jobj, j_cstr_to_buffer("leds"), leds);
     return jobj;
+}
+
+// Updates the white/color balance gains on a running service without a
+// restart: unlike PUT /api/config (service_apply_settings_json), which tears
+// down and reinitializes the whole capture pipeline, these are just three
+// plain numbers read fresh every frame - nothing to reinitialize. This is
+// what lets the web UI's sliders give live feedback while being dragged
+// instead of briefly interrupting DDP output on every tick. Only updates the
+// in-memory value; persisting to config.json still happens through the
+// normal "Save configuration" (PUT /api/config) path, like every other field.
+int service_apply_whitebalance_live(service_t* service, int wb_red, int wb_green, int wb_blue)
+{
+    pthread_mutex_lock(&_led_buffer_lock);
+    service->settings->wb_red = wb_red;
+    service->settings->wb_green = wb_green;
+    service->settings->wb_blue = wb_blue;
+    pthread_mutex_unlock(&_led_buffer_lock);
+    return 0;
+}
+
+static bool _launch_app_reply(LSHandle* sh __attribute__((unused)), LSMessage* msg, void* ctx __attribute__((unused)))
+{
+    INFO("applicationManager/launch reply: %s", LSMessageGetPayload(msg));
+    return true;
+}
+
+// LSCall must run on the thread the handle is attached to (the GMainLoop
+// thread) - service_start_calibration can be invoked from the REST/httplib
+// thread, so the actual call is marshaled over via g_idle_add rather than
+// issued directly, avoiding any cross-thread use of the LSHandle.
+static gboolean _do_launch_app_idle(gpointer data)
+{
+    service_t* service = (service_t*)data;
+    LSError lserror;
+    LSErrorInit(&lserror);
+
+    if (service->handle == NULL) {
+        WARN("Cannot launch app to foreground: no registered Luna handle");
+        return G_SOURCE_REMOVE;
+    }
+
+    if (!LSCall(service->handle, "luna://com.webos.applicationManager/launch",
+            "{\"id\":\"" APP_ID "\"}", _launch_app_reply, NULL, NULL, &lserror)) {
+        WARN("applicationManager/launch call failed: %s", lserror.message);
+        LSErrorFree(&lserror);
+    }
+
+    return G_SOURCE_REMOVE;
+}
+
+void service_start_calibration(service_t* service, const char* color)
+{
+    pthread_mutex_lock(&_led_buffer_lock);
+    service->calibration_active = true;
+    snprintf(service->calibration_color, sizeof(service->calibration_color), "%s", color);
+    pthread_mutex_unlock(&_led_buffer_lock);
+
+    g_idle_add(_do_launch_app_idle, service);
+}
+
+void service_stop_calibration(service_t* service)
+{
+    pthread_mutex_lock(&_led_buffer_lock);
+    service->calibration_active = false;
+    pthread_mutex_unlock(&_led_buffer_lock);
 }
 
 jvalue_ref service_build_settings_json(service_t* service)
@@ -557,6 +704,7 @@ LSMethod methods[] = {
     { "status", service_method_status, LUNA_METHOD_FLAGS_NONE },
     { "getSettings", service_method_get_settings, LUNA_METHOD_FLAGS_NONE },
     { "setSettings", service_method_set_settings, LUNA_METHOD_FLAGS_NONE },
+    { "stopCalibration", service_method_stop_calibration, LUNA_METHOD_FLAGS_NONE },
     { 0, 0, 0 }
 };
 
@@ -776,6 +924,8 @@ int service_register(service_t* service, GMainLoop* loop)
             WARN("settingsservice/getSystemSettings call failed: %s", lserror.message);
         }
     }
+
+    service->handle = registered ? handle : (registeredLegacy ? handlelegacy : NULL);
 
     LSErrorFree(&lserror);
     return 0;

@@ -33,6 +33,9 @@ void settings_init(settings_t* settings)
     settings->smoothing_rise_time_ms = 200;
     settings->smoothing_fall_time_ms = 80;
 
+    settings->letterbox_detection = true;
+    settings->scene_dimming = false;
+
     settings->led_count = LED_LAYOUT_DEFAULT_COUNT;
     settings->led_layout = malloc(sizeof(led_region_t) * (size_t)settings->led_count);
     memcpy(settings->led_layout, led_layout_default, sizeof(led_region_t) * (size_t)settings->led_count);
@@ -49,6 +52,10 @@ void settings_init(settings_t* settings)
     settings->led_layout_group_h = 0;
     settings->led_layout_group_v = 0;
     settings->led_layout_reverse = true;
+
+    settings->wb_red = 100;
+    settings->wb_green = 100;
+    settings->wb_blue = 100;
 }
 
 int settings_load_json(settings_t* settings, jvalue_ref source)
@@ -121,6 +128,10 @@ int settings_load_json(settings_t* settings, jvalue_ref source)
         jnumber_get_i32(value, &settings->smoothing_rise_time_ms);
     if ((value = jobject_get(source, j_cstr_to_buffer("smoothingfalltimems"))) && jis_number(value))
         jnumber_get_i32(value, &settings->smoothing_fall_time_ms);
+    if ((value = jobject_get(source, j_cstr_to_buffer("letterboxdetection"))) && jis_boolean(value))
+        jboolean_get(value, &settings->letterbox_detection);
+    if ((value = jobject_get(source, j_cstr_to_buffer("scenedimming"))) && jis_boolean(value))
+        jboolean_get(value, &settings->scene_dimming);
 
     if ((value = jobject_get(source, j_cstr_to_buffer("ledlayout"))) && jis_array(value)) {
         ssize_t region_count = jarray_size(value);
@@ -172,6 +183,13 @@ int settings_load_json(settings_t* settings, jvalue_ref source)
     if ((value = jobject_get(source, j_cstr_to_buffer("ledlayoutreverse"))) && jis_boolean(value))
         jboolean_get(value, &settings->led_layout_reverse);
 
+    if ((value = jobject_get(source, j_cstr_to_buffer("wbred"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->wb_red);
+    if ((value = jobject_get(source, j_cstr_to_buffer("wbgreen"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->wb_green);
+    if ((value = jobject_get(source, j_cstr_to_buffer("wbblue"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->wb_blue);
+
     return 0;
 }
 
@@ -204,6 +222,8 @@ int settings_save_json(settings_t* settings, jvalue_ref target)
     jobject_set(target, j_cstr_to_buffer("wledport"), jnumber_create_i32(settings->wled_port));
     jobject_set(target, j_cstr_to_buffer("smoothingrisetimems"), jnumber_create_i32(settings->smoothing_rise_time_ms));
     jobject_set(target, j_cstr_to_buffer("smoothingfalltimems"), jnumber_create_i32(settings->smoothing_fall_time_ms));
+    jobject_set(target, j_cstr_to_buffer("letterboxdetection"), jboolean_create(settings->letterbox_detection));
+    jobject_set(target, j_cstr_to_buffer("scenedimming"), jboolean_create(settings->scene_dimming));
 
     jvalue_ref led_layout_arr = jarray_create(NULL);
     for (int i = 0; i < settings->led_count; i++) {
@@ -226,6 +246,10 @@ int settings_save_json(settings_t* settings, jvalue_ref target)
     jobject_set(target, j_cstr_to_buffer("ledlayoutgrouph"), jnumber_create_i32(settings->led_layout_group_h));
     jobject_set(target, j_cstr_to_buffer("ledlayoutgroupv"), jnumber_create_i32(settings->led_layout_group_v));
     jobject_set(target, j_cstr_to_buffer("ledlayoutreverse"), jboolean_create(settings->led_layout_reverse));
+
+    jobject_set(target, j_cstr_to_buffer("wbred"), jnumber_create_i32(settings->wb_red));
+    jobject_set(target, j_cstr_to_buffer("wbgreen"), jnumber_create_i32(settings->wb_green));
+    jobject_set(target, j_cstr_to_buffer("wbblue"), jnumber_create_i32(settings->wb_blue));
 
     return 0;
 }

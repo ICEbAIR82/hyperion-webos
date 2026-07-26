@@ -41,6 +41,18 @@ typedef struct _settings_t {
     int smoothing_rise_time_ms;
     int smoothing_fall_time_ms;
 
+    // Detects black letterbox (top/bottom) or pillarbox (left/right) bars
+    // in the captured frame and maps LEDs onto the actual picture area
+    // instead of the raw capture frame, like HyperHDR's black-bar detector.
+    bool letterbox_detection;
+
+    // Dims all LEDs uniformly (on top of their own per-region colors) based
+    // on the captured frame's overall average brightness, for a more
+    // atmospheric effect during predominantly dark scenes. Off by default -
+    // this is a subjective mood effect, unlike letterbox_detection above
+    // which is closer to a straightforward correctness fix.
+    bool scene_dimming;
+
     led_region_t* led_layout;
     int led_count;
 
@@ -59,6 +71,16 @@ typedef struct _settings_t {
     int led_layout_group_h;
     int led_layout_group_v;
     bool led_layout_reverse;
+
+    // Per-channel white/color balance gain (percent, 100 = unchanged),
+    // applied as a straight multiply to every LED's RGB value right before
+    // it's sent out. Corrects for the strip's own color response (e.g. a
+    // captured neutral white looking slightly blue/green on the physical
+    // LEDs) - not a real RGBW white-channel split, just a 3-channel
+    // correction, which is all an RGB-only strip needs or can use.
+    int wb_red;
+    int wb_green;
+    int wb_blue;
 } settings_t;
 
 void settings_init(settings_t*);

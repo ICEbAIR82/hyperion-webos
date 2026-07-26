@@ -1,7 +1,9 @@
 #include "rest_api.h"
 #include "log.h"
+#include "log_server.h"
 #include "wled_discovery.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -77,6 +79,80 @@ int rest_api_put_config(const char* body, char** out_response)
     return 200;
 }
 
+char* rest_api_put_whitebalance_live(const char* body)
+{
+    if (!_service)
+        return strdup("{\"returnValue\":false}");
+
+    JSchemaInfo schema;
+    jschema_info_init(&schema, jschema_all(), NULL, NULL);
+    jvalue_ref parsed = jdom_parse(j_cstr_to_buffer(body), DOMOPT_NOOPT, &schema);
+
+    if (jis_null(parsed)) {
+        j_release(&parsed);
+        WARN("PUT /api/whitebalance: invalid JSON body");
+        return strdup("{\"returnValue\":false}");
+    }
+
+    settings_t* settings = _service->settings;
+    int wb_red = settings->wb_red;
+    int wb_green = settings->wb_green;
+    int wb_blue = settings->wb_blue;
+
+    jvalue_ref value;
+    if ((value = jobject_get(parsed, j_cstr_to_buffer("wbred"))) && jis_number(value))
+        jnumber_get_i32(value, &wb_red);
+    if ((value = jobject_get(parsed, j_cstr_to_buffer("wbgreen"))) && jis_number(value))
+        jnumber_get_i32(value, &wb_green);
+    if ((value = jobject_get(parsed, j_cstr_to_buffer("wbblue"))) && jis_number(value))
+        jnumber_get_i32(value, &wb_blue);
+
+    j_release(&parsed);
+
+    service_apply_whitebalance_live(_service, wb_red, wb_green, wb_blue);
+    return strdup("{\"returnValue\":true}");
+}
+
+char* rest_api_calibrate_start(const char* body)
+{
+    if (!_service)
+        return strdup("{\"returnValue\":false}");
+
+    JSchemaInfo schema;
+    jschema_info_init(&schema, jschema_all(), NULL, NULL);
+    jvalue_ref parsed = jdom_parse(j_cstr_to_buffer(body), DOMOPT_NOOPT, &schema);
+
+    const char* color = "#ffffff";
+    raw_buffer color_buf = { 0 };
+    bool have_color_buf = false;
+
+    if (!jis_null(parsed)) {
+        jvalue_ref value = jobject_get(parsed, j_cstr_to_buffer("color"));
+        if (value && jis_string(value)) {
+            color_buf = jstring_get(value);
+            color = color_buf.m_str;
+            have_color_buf = true;
+        }
+    }
+
+    service_start_calibration(_service, color);
+
+    if (have_color_buf)
+        jstring_free_buffer(color_buf);
+    j_release(&parsed);
+
+    return strdup("{\"returnValue\":true}");
+}
+
+char* rest_api_calibrate_stop(void)
+{
+    if (!_service)
+        return strdup("{\"returnValue\":false}");
+
+    service_stop_calibration(_service);
+    return strdup("{\"returnValue\":true}");
+}
+
 char* rest_api_start(void)
 {
     if (!_service)
@@ -136,4 +212,10 @@ char* rest_api_wled_info(const char* ip)
     char* result = strdup(jvalue_tostring_simple(parsed));
     j_release(&parsed);
     return result;
+}
+
+char* rest_api_get_logs(const char* since, const char* boot)
+{
+    uint64_t since_seq = (since && since[0] != '\0') ? strtoull(since, NULL, 10) : 0;
+    return log_server_build_json_since(since_seq, boot);
 }

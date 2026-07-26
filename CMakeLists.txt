@@ -53,6 +53,7 @@ add_executable(hyperion-webos
     src/settings.c
     src/service.c
     src/log.c
+    src/log_server.c
     src/utils.c
     src/hyperion_client.c
     src/json_rpc_client.c
@@ -61,6 +62,8 @@ add_executable(hyperion-webos
     src/led_layout.c
     src/led_mapper.c
     src/led_smoother.c
+    src/blackbar_detector.c
+    src/scene_dimmer.c
     src/rest_api.c
     src/wled_discovery.cpp
 )

@@ -1,4 +1,5 @@
 #include "log.h"
+#include "log_server.h"
 #include "utils.h"
 #include <PmLogLib.h>
 #include <stdint.h>
@@ -56,7 +57,9 @@ void log_printf(LogLevel level, const char* module, const char* fmt, ...)
     _PmLogMsgKV(context, (PmLogLevel)level, 0, level == Debug ? NULL : level_str, 0, NULL, NULL, formatted);
 
     if (level <= current_log_level) {
-        fprintf(stderr, "%10.3fs %s[%4s %-20s]\x1b[0m %s\n", (getticks_us() - start) / 1000000.0, color_str, level_str, module, formatted + prefix);
+        double elapsed = (getticks_us() - start) / 1000000.0;
+        fprintf(stderr, "%10.3fs %s[%4s %-20s]\x1b[0m %s\n", elapsed, color_str, level_str, module, formatted + prefix);
+        log_server_push(level, elapsed, module, formatted + prefix);
     }
 
     va_end(args);

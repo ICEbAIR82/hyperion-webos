@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "log.h"
+#include "log_server.h"
 #include "rest_api.h"
 #include "service.h"
 #include "settings.h"
@@ -173,6 +174,7 @@ int main(int argc, char* argv[])
     int ret;
 
     log_init();
+    log_server_init(LOG_SERVER_DEFAULT_PORT);
     INFO("Starting up (version: %s)...", HYPERION_WEBOS_VERSION);
 
     using_cli = !getenv("LS_SERVICE_NAMES");
@@ -230,6 +232,7 @@ int main(int argc, char* argv[])
     DBG("Main loop quit...");
 
     webserver_stop();
+    log_server_stop();
 
     DBG("Cleaning up service...");
     service_destroy(&service);

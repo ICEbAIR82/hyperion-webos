@@ -51,3 +51,17 @@ void led_mapper_compute(const uint8_t* rgb, int width, int height,
         }
     }
 }
+
+void led_mapper_remap_to_active_area(const led_region_t* layout, int led_count,
+    active_area_t area, led_region_t* out)
+{
+    float area_w = area.hmax - area.hmin;
+    float area_h = area.vmax - area.vmin;
+
+    for (int i = 0; i < led_count; i++) {
+        out[i].hmin = area.hmin + layout[i].hmin * area_w;
+        out[i].hmax = area.hmin + layout[i].hmax * area_w;
+        out[i].vmin = area.vmin + layout[i].vmin * area_h;
+        out[i].vmax = area.vmin + layout[i].vmax * area_h;
+    }
+}

@@ -786,6 +786,34 @@ static bool power_callback(LSHandle* sh __attribute__((unused)), LSMessage* msg,
     return true;
 }
 
+// Tells the Hyperion/HyperHDR receiver which dynamic range we're capturing, so
+// it can pick the matching tonemapping LUT for the stream we send it.
+//
+// Deliberately a no-op with direct WLED output: there is no daemon in that
+// setup, so the whole JSON-RPC path (get_daemon_flavor -> send_rpc_message ->
+// do_http_post) can never succeed - and do_http_post shells out to curl, so
+// every single HDR/dynamicRange switch was forking a process just to log
+// CURLE_COULDNT_CONNECT. Nothing downstream needs the call: `range` is used
+// nowhere else, and the LED pipeline (led_mapper -> smoother -> white balance
+// -> scene dimming -> DDP) reads no HDR state at all.
+//
+// The flip side, worth being aware of rather than surprised by: direct WLED
+// output therefore does no HDR tonemapping whatsoever. That correction lives
+// entirely inside HyperHDR's LUT, so HDR/Dolby Vision content drives the strip
+// with uncorrected colors. Adding our own per-range correction would be a
+// separate feature, not part of silencing this call.
+static void service_report_hdr_state(service_t* service, DynamicRange range)
+{
+    if (service->settings->direct_led_output) {
+        return;
+    }
+
+    int ret = set_hdr_state(service->settings->unix_socket ? "127.0.0.1" : service->settings->address, RPC_PORT, range);
+    if (ret != 0) {
+        ERR("set_hdr_state failed, ret: %d", ret);
+    }
+}
+
 static bool videooutput_callback(LSHandle* sh __attribute__((unused)), LSMessage* msg, void* data)
 {
     JSchemaInfo schema;
@@ -833,11 +861,7 @@ static bool videooutput_callback(LSHandle* sh __attribute__((unused)), LSMessage
     const char* hdr_type_str = hdr_type_buf.m_str;
     INFO("videooutput_callback: hdrType: %s", hdr_type_str);
 
-    DynamicRange range = get_dynamic_range(hdr_type_str);
-    int ret = set_hdr_state(service->settings->unix_socket ? "127.0.0.1" : service->settings->address, RPC_PORT, range);
-    if (ret != 0) {
-        ERR("videooutput_callback: set_hdr_state failed, ret: %d", ret);
-    }
+    service_report_hdr_state(service, get_dynamic_range(hdr_type_str));
 
     jstring_free_buffer(hdr_type_buf);
     j_release(&parsed);
@@ -882,11 +906,7 @@ static bool picture_callback(LSHandle* sh __attribute__((unused)), LSMessage* ms
     const char* dynamic_range_str = dynamic_range_buf.m_str;
     INFO("picture_callback: dynamicRange: %s", dynamic_range_str);
 
-    DynamicRange range = get_dynamic_range(dynamic_range_str);
-    int ret = set_hdr_state(service->settings->unix_socket ? "127.0.0.1" : service->settings->address, RPC_PORT, range);
-    if (ret != 0) {
-        ERR("videooutput_callback: set_hdr_state failed, ret: %d", ret);
-    }
+    service_report_hdr_state(service, get_dynamic_range(dynamic_range_str));
 
     jstring_free_buffer(dynamic_range_buf);
     j_release(&parsed);

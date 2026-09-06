@@ -110,6 +110,34 @@ int service_feed_frame(void* data, int width, int height, uint8_t* rgb_data)
         int led_count = service->settings->led_count;
         const led_region_t* layout = service->settings->led_layout;
 
+        // The LG vtcapture driver drops our capture session on its own every
+        // ~120s (error 12), after which unicapture tears the session down and
+        // rebuilds it - roughly a second during which video_capture_running is
+        // false. UI capture keeps running throughout, so the pipeline still
+        // produces frames, but they contain only the graphics plane: with no
+        // OSD on screen that plane is fully transparent, reaches us as a solid
+        // black frame, and blanks the strip for the whole window.
+        //
+        // Hold the last computed colors instead. Sending them (rather than
+        // skipping the send) matters: WLED falls back to its own boot state
+        // once realtime packets stop arriving, so an interrupted stream would
+        // trade a black strip for an amber one.
+        //
+        // Guarded on video_capture being configured at all - with video
+        // capture switched off deliberately (novideo), UI-only frames are the
+        // intended source and must pass through normally.
+        if (service->unicapture.video_capture != NULL && !service->unicapture.video_capture_running) {
+            // Keep the smoother's clock running so the first real frame after
+            // the gap fades in normally instead of snapping - its decay is
+            // based on elapsed time, so an unaccounted-for second would push
+            // the alpha to ~1.0.
+            led_smoother_hold();
+            if (ddp_sender_send(service->led_rgb_buffer, led_count) != 0) {
+                WARN("DDP frame sending failed");
+            }
+            return 0;
+        }
+
         pthread_mutex_lock(&_led_buffer_lock);
         if (service->settings->letterbox_detection) {
             active_area_t area = blackbar_detector_update(rgb_data, width, height);

@@ -15,4 +15,11 @@ int led_smoother_init(int led_count);
 // A time <= 0 disables smoothing for that direction (passthrough).
 void led_smoother_apply(uint8_t* led_rgb, int led_count, int rise_time_ms, int fall_time_ms);
 
+// Keeps the elapsed-time basis above in sync while the caller is holding its
+// last output instead of feeding new frames (see service_feed_frame). Without
+// this, the whole hold window would land in the next call's elapsed time,
+// driving the decay to ~1.0 and snapping the LEDs straight to the new color
+// instead of fading like they do everywhere else.
+void led_smoother_hold(void);
+
 void led_smoother_close(void);

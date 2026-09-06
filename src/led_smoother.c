@@ -66,6 +66,19 @@ void led_smoother_apply(uint8_t* led_rgb, int led_count, int rise_time_ms, int f
     }
 }
 
+void led_smoother_hold(void)
+{
+    if (_prev == NULL)
+        return;
+
+    // Only the clock moves - _prev is deliberately left alone. The buffer the
+    // caller is holding has white balance and scene dimming applied on top of
+    // these smoothed values, so feeding it back in here would drag _prev
+    // towards the already-corrected colors and double-apply those gains once
+    // real frames resume.
+    clock_gettime(CLOCK_MONOTONIC, &_last_ts);
+}
+
 void led_smoother_close(void)
 {
     free(_prev);

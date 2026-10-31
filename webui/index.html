@@ -634,11 +634,17 @@
   </section>
 
   <section class="card">
-    <h2>White / Color Balance</h2>
-    <span class="hint" style="display:block;margin-bottom:12px">Corrects the strip's
-      own color response (e.g. a captured neutral white looking slightly tinted on
-      the physical LEDs). Dragging applies instantly to the running output - still
-      needs "Save configuration" below to persist across restarts.</span>
+    <h2>Brightness / Color Balance</h2>
+    <span class="hint" style="display:block;margin-bottom:12px">Dragging applies
+      instantly to the running output - still needs "Save configuration" below to
+      persist across restarts.</span>
+
+    <div class="field">
+      <label for="wb-brightness">LED brightness: <span id="wb-brightness-val">180</span>%</label>
+      <input type="range" id="wb-brightness" min="0" max="300" step="5" value="180" data-key="ledbrightness" data-type="int">
+      <span class="hint">Mostly lifts mid tones, dark scenes stay dark. Colors are
+        never clipped, a full channel limits the whole LED instead.</span>
+    </div>
 
     <div class="field">
       <label for="wb-red">Red gain: <span id="wb-red-val">100</span>%</label>
@@ -1299,7 +1305,8 @@
       wbred: parseInt(document.getElementById('wb-red').value, 10),
       wbgreen: parseInt(document.getElementById('wb-green').value, 10),
       wbblue: parseInt(document.getElementById('wb-blue').value, 10),
-      ledgamma: parseFloat(document.getElementById('wb-gamma').value)
+      ledgamma: parseFloat(document.getElementById('wb-gamma').value),
+      ledbrightness: parseInt(document.getElementById('wb-brightness').value, 10)
     };
     if (wbThrottleTimer) return;
     wbThrottleTimer = setTimeout(function () {
@@ -1313,9 +1320,10 @@
     document.getElementById('wb-green-val').textContent = document.getElementById('wb-green').value;
     document.getElementById('wb-blue-val').textContent = document.getElementById('wb-blue').value;
     document.getElementById('wb-gamma-val').textContent = parseFloat(document.getElementById('wb-gamma').value).toFixed(1);
+    document.getElementById('wb-brightness-val').textContent = document.getElementById('wb-brightness').value;
   }
 
-  ['wb-red', 'wb-green', 'wb-blue', 'wb-gamma'].forEach(function (id) {
+  ['wb-red', 'wb-green', 'wb-blue', 'wb-gamma', 'wb-brightness'].forEach(function (id) {
     var el = document.getElementById(id);
     el.addEventListener('input', function () {
       syncWhiteBalanceLabels();
@@ -1334,6 +1342,7 @@
     document.getElementById('wb-green').value = 100;
     document.getElementById('wb-blue').value = 100;
     document.getElementById('wb-gamma').value = 2.2;
+    document.getElementById('wb-brightness').value = 180;
     syncWhiteBalanceLabels();
     queueWhiteBalanceLive();
     sendWhiteBalanceLive();

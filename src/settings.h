@@ -88,10 +88,17 @@ typedef struct _settings_t {
     // actually shows them, which makes otherwise invisible shadow tints
     // glow on the wall. 1.0 = passthrough.
     double led_gamma;
+
+    // Overall LED brightness (percent, 100 = unchanged), applied after gamma
+    // in linear space. Above 100 it mostly lifts mid tones - gamma keeps dark
+    // tones near zero either way - and a channel that would overflow scales
+    // the whole LED down instead of clipping, so hue is preserved.
+    int led_brightness;
 } settings_t;
 
 void settings_init(settings_t*);
 double settings_clamp_led_gamma(double gamma);
+int settings_clamp_led_brightness(int brightness);
 
 int settings_load_json(settings_t* settings, jvalue_ref source);
 int settings_save_json(settings_t* settings, jvalue_ref target);

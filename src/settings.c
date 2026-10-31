@@ -58,6 +58,7 @@ void settings_init(settings_t* settings)
     settings->wb_blue = 100;
 
     settings->led_gamma = 2.2;
+    settings->led_brightness = 180;
 }
 
 // Same 1.0-3.0 range the web UI slider offers. Also used by the live
@@ -69,6 +70,16 @@ double settings_clamp_led_gamma(double gamma)
     if (gamma > 3.0)
         return 3.0;
     return gamma;
+}
+
+// Same 0-300 range the web UI slider offers, used by both update paths too.
+int settings_clamp_led_brightness(int brightness)
+{
+    if (brightness < 0)
+        return 0;
+    if (brightness > 300)
+        return 300;
+    return brightness;
 }
 
 int settings_load_json(settings_t* settings, jvalue_ref source)
@@ -207,6 +218,10 @@ int settings_load_json(settings_t* settings, jvalue_ref source)
         jnumber_get_f64(value, &settings->led_gamma);
     settings->led_gamma = settings_clamp_led_gamma(settings->led_gamma);
 
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledbrightness"))) && jis_number(value))
+        jnumber_get_i32(value, &settings->led_brightness);
+    settings->led_brightness = settings_clamp_led_brightness(settings->led_brightness);
+
     return 0;
 }
 
@@ -268,6 +283,7 @@ int settings_save_json(settings_t* settings, jvalue_ref target)
     jobject_set(target, j_cstr_to_buffer("wbgreen"), jnumber_create_i32(settings->wb_green));
     jobject_set(target, j_cstr_to_buffer("wbblue"), jnumber_create_i32(settings->wb_blue));
     jobject_set(target, j_cstr_to_buffer("ledgamma"), jnumber_create_f64(settings->led_gamma));
+    jobject_set(target, j_cstr_to_buffer("ledbrightness"), jnumber_create_i32(settings->led_brightness));
 
     return 0;
 }

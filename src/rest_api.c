@@ -99,6 +99,7 @@ char* rest_api_put_whitebalance_live(const char* body)
     int wb_green = settings->wb_green;
     int wb_blue = settings->wb_blue;
     double led_gamma = settings->led_gamma;
+    int led_brightness = settings->led_brightness;
 
     jvalue_ref value;
     if ((value = jobject_get(parsed, j_cstr_to_buffer("wbred"))) && jis_number(value))
@@ -109,10 +110,12 @@ char* rest_api_put_whitebalance_live(const char* body)
         jnumber_get_i32(value, &wb_blue);
     if ((value = jobject_get(parsed, j_cstr_to_buffer("ledgamma"))) && jis_number(value))
         jnumber_get_f64(value, &led_gamma);
+    if ((value = jobject_get(parsed, j_cstr_to_buffer("ledbrightness"))) && jis_number(value))
+        jnumber_get_i32(value, &led_brightness);
 
     j_release(&parsed);
 
-    service_apply_whitebalance_live(_service, wb_red, wb_green, wb_blue, led_gamma);
+    service_apply_whitebalance_live(_service, wb_red, wb_green, wb_blue, led_gamma, led_brightness);
     return strdup("{\"returnValue\":true}");
 }
 

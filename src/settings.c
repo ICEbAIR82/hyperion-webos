@@ -56,6 +56,19 @@ void settings_init(settings_t* settings)
     settings->wb_red = 100;
     settings->wb_green = 100;
     settings->wb_blue = 100;
+
+    settings->led_gamma = 2.2;
+}
+
+// Same 1.0-3.0 range the web UI slider offers. Also used by the live
+// (no-restart) update path, which doesn't go through settings_load_json.
+double settings_clamp_led_gamma(double gamma)
+{
+    if (!(gamma >= 1.0))
+        return 1.0;
+    if (gamma > 3.0)
+        return 3.0;
+    return gamma;
 }
 
 int settings_load_json(settings_t* settings, jvalue_ref source)
@@ -190,6 +203,10 @@ int settings_load_json(settings_t* settings, jvalue_ref source)
     if ((value = jobject_get(source, j_cstr_to_buffer("wbblue"))) && jis_number(value))
         jnumber_get_i32(value, &settings->wb_blue);
 
+    if ((value = jobject_get(source, j_cstr_to_buffer("ledgamma"))) && jis_number(value))
+        jnumber_get_f64(value, &settings->led_gamma);
+    settings->led_gamma = settings_clamp_led_gamma(settings->led_gamma);
+
     return 0;
 }
 
@@ -250,6 +267,7 @@ int settings_save_json(settings_t* settings, jvalue_ref target)
     jobject_set(target, j_cstr_to_buffer("wbred"), jnumber_create_i32(settings->wb_red));
     jobject_set(target, j_cstr_to_buffer("wbgreen"), jnumber_create_i32(settings->wb_green));
     jobject_set(target, j_cstr_to_buffer("wbblue"), jnumber_create_i32(settings->wb_blue));
+    jobject_set(target, j_cstr_to_buffer("ledgamma"), jnumber_create_f64(settings->led_gamma));
 
     return 0;
 }

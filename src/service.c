@@ -12,6 +12,7 @@
 #include "unicapture.h"
 #include "version.h"
 #include <errno.h>
+#include <math.h>
 #include <luna-service2/lunaservice.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,36 +70,46 @@ void* connection_loop(void* data)
 // thread. Separate from _control_lock below, which guards the buffer's
 // allocation lifetime (alloc/free) instead - the capture thread never touches
 // _control_lock, so a single lock couldn't cover both without either slowing
-// down every frame or risking a read-after-free. Also guards settings->wb_*,
-// which service_apply_whitebalance_live() below updates live from a REST
-// thread without going through the usual (restart-triggering) settings-apply
-// path - reusing this lock instead of adding a third one for three plain ints.
+// down every frame or risking a read-after-free. Also guards settings->wb_*
+// and settings->led_gamma, which service_apply_whitebalance_live() below
+// updates live from a REST thread without going through the usual
+// (restart-triggering) settings-apply path - reusing this lock instead of
+// adding a third one for a few plain numbers. The gamma LUT below is rebuilt
+// under it as well.
 static pthread_mutex_t _led_buffer_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static uint8_t apply_gain(uint8_t value, int gain_percent)
+// Captured values are gamma-encoded, the strip's PWM is linear - this maps
+// one to the other. Only rebuilt when the gamma setting actually changes.
+static float _gamma_lut[256];
+static double _gamma_lut_gamma = -1.0;
+
+static void update_gamma_lut(double gamma)
 {
-    int scaled = (value * gain_percent) / 100;
-    if (scaled < 0)
-        return 0;
-    if (scaled > 255)
-        return 255;
-    return (uint8_t)scaled;
+    if (gamma == _gamma_lut_gamma)
+        return;
+    for (int v = 0; v < 256; v++)
+        _gamma_lut[v] = (float)(255.0 * pow(v / 255.0, gamma));
+    _gamma_lut_gamma = gamma;
 }
 
-static void apply_white_balance(uint8_t* buffer, int led_count, int gain_r, int gain_g, int gain_b)
+// Gamma, white balance and scene dimming in one pass with a single rounding
+// at the end. Doing them as separate 8-bit steps truncated every channel
+// once per step, which at the low values of dark scenes noticeably skewed
+// the ratio between channels (i.e. the hue).
+static void apply_output_stage(uint8_t* buffer, int led_count, int gain_r, int gain_g, int gain_b, float dim_gain)
 {
-    for (int i = 0; i < led_count; i++) {
-        buffer[i * 3 + 0] = apply_gain(buffer[i * 3 + 0], gain_r);
-        buffer[i * 3 + 1] = apply_gain(buffer[i * 3 + 1], gain_g);
-        buffer[i * 3 + 2] = apply_gain(buffer[i * 3 + 2], gain_b);
-    }
-}
-
-static void apply_scene_dimming(uint8_t* buffer, int led_count, float gain)
-{
-    int gain_percent = (int)(gain * 100.0f + 0.5f);
+    const float gains[3] = {
+        gain_r / 100.0f * dim_gain,
+        gain_g / 100.0f * dim_gain,
+        gain_b / 100.0f * dim_gain,
+    };
     for (int i = 0; i < led_count * 3; i++) {
-        buffer[i] = apply_gain(buffer[i], gain_percent);
+        float out = _gamma_lut[buffer[i]] * gains[i % 3] + 0.5f;
+        if (out < 0.0f)
+            out = 0.0f;
+        if (out > 255.0f)
+            out = 255.0f;
+        buffer[i] = (uint8_t)out;
     }
 }
 
@@ -147,12 +158,12 @@ int service_feed_frame(void* data, int width, int height, uint8_t* rgb_data)
         led_mapper_compute(rgb_data, width, height, layout, led_count, service->led_rgb_buffer);
         led_smoother_apply(service->led_rgb_buffer, led_count,
             service->settings->smoothing_rise_time_ms, service->settings->smoothing_fall_time_ms);
-        apply_white_balance(service->led_rgb_buffer, led_count,
-            service->settings->wb_red, service->settings->wb_green, service->settings->wb_blue);
-        if (service->settings->scene_dimming) {
-            float gain = scene_dimmer_compute_gain(rgb_data, width, height);
-            apply_scene_dimming(service->led_rgb_buffer, led_count, gain);
-        }
+        float dim_gain = 1.0f;
+        if (service->settings->scene_dimming)
+            dim_gain = scene_dimmer_compute_gain(rgb_data, width, height);
+        update_gamma_lut(service->settings->led_gamma);
+        apply_output_stage(service->led_rgb_buffer, led_count,
+            service->settings->wb_red, service->settings->wb_green, service->settings->wb_blue, dim_gain);
         pthread_mutex_unlock(&_led_buffer_lock);
         if (ddp_sender_send(service->led_rgb_buffer, led_count) != 0) {
             WARN("DDP frame sending failed");
@@ -546,20 +557,21 @@ jvalue_ref service_build_live_leds_json(service_t* service)
     return jobj;
 }
 
-// Updates the white/color balance gains on a running service without a
+// Updates the white/color balance gains and LED gamma on a running service without a
 // restart: unlike PUT /api/config (service_apply_settings_json), which tears
-// down and reinitializes the whole capture pipeline, these are just three
+// down and reinitializes the whole capture pipeline, these are just a few
 // plain numbers read fresh every frame - nothing to reinitialize. This is
 // what lets the web UI's sliders give live feedback while being dragged
 // instead of briefly interrupting DDP output on every tick. Only updates the
 // in-memory value; persisting to config.json still happens through the
 // normal "Save configuration" (PUT /api/config) path, like every other field.
-int service_apply_whitebalance_live(service_t* service, int wb_red, int wb_green, int wb_blue)
+int service_apply_whitebalance_live(service_t* service, int wb_red, int wb_green, int wb_blue, double led_gamma)
 {
     pthread_mutex_lock(&_led_buffer_lock);
     service->settings->wb_red = wb_red;
     service->settings->wb_green = wb_green;
     service->settings->wb_blue = wb_blue;
+    service->settings->led_gamma = settings_clamp_led_gamma(led_gamma);
     pthread_mutex_unlock(&_led_buffer_lock);
     return 0;
 }

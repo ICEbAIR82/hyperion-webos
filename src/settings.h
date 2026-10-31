@@ -81,9 +81,17 @@ typedef struct _settings_t {
     int wb_red;
     int wb_green;
     int wb_blue;
+
+    // Transfer curve from the captured (gamma-encoded) picture to the
+    // strip's linear PWM drive, applied per channel before white balance.
+    // Without it dark scenes drive the LEDs far brighter than the TV
+    // actually shows them, which makes otherwise invisible shadow tints
+    // glow on the wall. 1.0 = passthrough.
+    double led_gamma;
 } settings_t;
 
 void settings_init(settings_t*);
+double settings_clamp_led_gamma(double gamma);
 
 int settings_load_json(settings_t* settings, jvalue_ref source);
 int settings_save_json(settings_t* settings, jvalue_ref target);

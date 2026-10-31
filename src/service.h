@@ -85,7 +85,7 @@ int service_apply_settings_json(service_t* service, jvalue_ref parsed);
 void service_start_calibration(service_t* service, const char* color);
 void service_stop_calibration(service_t* service);
 
-// Updates white/color balance gains in-memory only, without a restart -
+// Updates white/color balance gains and LED gamma in-memory only, without a restart -
 // see the definition in service.c for why this needs to be separate from
 // service_apply_settings_json. Returns 0 on success.
-int service_apply_whitebalance_live(service_t* service, int wb_red, int wb_green, int wb_blue);
+int service_apply_whitebalance_live(service_t* service, int wb_red, int wb_green, int wb_blue, double led_gamma);

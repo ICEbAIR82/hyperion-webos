@@ -652,7 +652,13 @@
       <label for="wb-blue">Blue gain: <span id="wb-blue-val">100</span>%</label>
       <input type="range" id="wb-blue" min="0" max="150" value="100" data-key="wbblue" data-type="int">
     </div>
-    <button id="btnResetWhiteBalance" type="button">Reset to 100%</button>
+    <div class="field">
+      <label for="wb-gamma">LED gamma: <span id="wb-gamma-val">2.2</span></label>
+      <input type="range" id="wb-gamma" min="1" max="3" step="0.1" value="2.2" data-key="ledgamma" data-type="float">
+      <span class="hint">Matches the TV's dark tones so dark scenes don't glow on the
+        wall. 1.0 = off.</span>
+    </div>
+    <button id="btnResetWhiteBalance" type="button">Reset to defaults</button>
 
     <div class="field" style="margin-top:14px">
       <label>Calibrate on TV</label>
@@ -813,6 +819,9 @@
       } else if (type === 'int') {
         var n = parseInt(el.value, 10);
         if (!isNaN(n)) out[key] = n;
+      } else if (type === 'float') {
+        var f = parseFloat(el.value);
+        if (!isNaN(f)) out[key] = f;
       } else {
         out[key] = el.value;
       }
@@ -1289,7 +1298,8 @@
     wbPending = {
       wbred: parseInt(document.getElementById('wb-red').value, 10),
       wbgreen: parseInt(document.getElementById('wb-green').value, 10),
-      wbblue: parseInt(document.getElementById('wb-blue').value, 10)
+      wbblue: parseInt(document.getElementById('wb-blue').value, 10),
+      ledgamma: parseFloat(document.getElementById('wb-gamma').value)
     };
     if (wbThrottleTimer) return;
     wbThrottleTimer = setTimeout(function () {
@@ -1302,9 +1312,10 @@
     document.getElementById('wb-red-val').textContent = document.getElementById('wb-red').value;
     document.getElementById('wb-green-val').textContent = document.getElementById('wb-green').value;
     document.getElementById('wb-blue-val').textContent = document.getElementById('wb-blue').value;
+    document.getElementById('wb-gamma-val').textContent = parseFloat(document.getElementById('wb-gamma').value).toFixed(1);
   }
 
-  ['wb-red', 'wb-green', 'wb-blue'].forEach(function (id) {
+  ['wb-red', 'wb-green', 'wb-blue', 'wb-gamma'].forEach(function (id) {
     var el = document.getElementById(id);
     el.addEventListener('input', function () {
       syncWhiteBalanceLabels();
@@ -1322,6 +1333,7 @@
     document.getElementById('wb-red').value = 100;
     document.getElementById('wb-green').value = 100;
     document.getElementById('wb-blue').value = 100;
+    document.getElementById('wb-gamma').value = 2.2;
     syncWhiteBalanceLabels();
     queueWhiteBalanceLive();
     sendWhiteBalanceLive();
